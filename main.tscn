@@ -1,0 +1,84 @@
+[gd_scene format=3 uid="uid://bwfoe1xev8vfe"]
+
+[ext_resource type="Script" uid="uid://btbgbnmxf6hip" path="res://Main.gd" id="1_ig7tw"]
+
+[node name="Main" type="Control" unique_id=589451607]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_ig7tw")
+
+[node name="Background" type="ColorRect" parent="." unique_id=707308645]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.93333334, 0.93333334, 0.93333334, 1)
+
+[node name="CenterContainer" type="CenterContainer" parent="." unique_id=240532231]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="GameLayout" type="HBoxContainer" parent="CenterContainer" unique_id=1612019200]
+layout_mode = 2
+theme_override_constants/separation = 40
+
+[node name="AspectRatioContainer" type="AspectRatioContainer" parent="CenterContainer/GameLayout" unique_id=1581111189]
+layout_mode = 2
+
+[node name="BoardWrapper" type="MarginContainer" parent="CenterContainer/GameLayout/AspectRatioContainer" unique_id=1645069986]
+layout_mode = 2
+theme_override_constants/margin_left = 50
+theme_override_constants/margin_top = 50
+theme_override_constants/margin_right = 50
+theme_override_constants/margin_bottom = 50
+
+[node name="Board" type="GridContainer" parent="CenterContainer/GameLayout/AspectRatioContainer/BoardWrapper" unique_id=1094598808]
+custom_minimum_size = Vector2(640, 640)
+layout_mode = 2
+theme_override_constants/h_separation = 0
+theme_override_constants/v_separation = 0
+columns = 8
+
+[node name="SidePanel" type="VBoxContainer" parent="CenterContainer/GameLayout" unique_id=712625401]
+custom_minimum_size = Vector2(250, 0)
+layout_mode = 2
+size_flags_vertical = 4
+
+[node name="BlackTimerLabel" type="Label" parent="CenterContainer/GameLayout/SidePanel" unique_id=1509092163]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.08627451, 0.08235294, 0.07058824, 1)
+theme_override_font_sizes/font_size = 36
+
+[node name="BlackNameLabel" type="Label" parent="CenterContainer/GameLayout/SidePanel" unique_id=578643025]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.08627451, 0.08235294, 0.07058824, 1)
+
+[node name="VsLabel" type="Label" parent="CenterContainer/GameLayout/SidePanel" unique_id=1604406911]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.08627451, 0.08235294, 0.07058824, 1)
+text = "VS"
+
+[node name="WhiteNameLabel" type="Label" parent="CenterContainer/GameLayout/SidePanel" unique_id=113077124]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.08627451, 0.08235294, 0.07058824, 1)
+
+[node name="WhiteTimerLabel" type="Label" parent="CenterContainer/GameLayout/SidePanel" unique_id=1573364350]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.08627451, 0.08235294, 0.07058824, 1)
+theme_override_font_sizes/font_size = 36
+
+[node name="BtnResign" type="Button" parent="CenterContainer/GameLayout/SidePanel" unique_id=16460448]
+layout_mode = 2
+text = "Resign"
+
+[node name="SoundPlayer" type="AudioStreamPlayer" parent="." unique_id=221654747]

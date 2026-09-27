@@ -1,0 +1,59 @@
+[gd_scene format=3 uid="uid://cpxk30vql5pp0"]
+
+[ext_resource type="Script" uid="uid://gc0g0fkkvvm3" path="res://main_menu.gd" id="1_06t4h"]
+
+[node name="MainMenu" type="Control" unique_id=556883357]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_06t4h")
+
+[node name="Background" type="ColorRect" parent="." unique_id=1220835524]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.93333334, 0.93333334, 0.93333334, 1)
+
+[node name="CenterContainer" type="CenterContainer" parent="." unique_id=1339518943]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer" unique_id=448522051]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="CenterContainer/VBoxContainer" unique_id=1762157113]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.08627451, 0.08235294, 0.07058824, 1)
+theme_override_font_sizes/font_size = 100
+text = "GiChess"
+
+[node name="BtnLocal" type="Button" parent="CenterContainer/VBoxContainer" unique_id=1264970564]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+text = "Play Local"
+
+[node name="BtnAI" type="Button" parent="CenterContainer/VBoxContainer" unique_id=64413115]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+text = "Play with computer"
+
+[node name="TimeOption" type="OptionButton" parent="CenterContainer/VBoxContainer" unique_id=511498020]
+custom_minimum_size = Vector2(150, 25)
+layout_mode = 2
+size_flags_horizontal = 4
+
+[node name="EloOption" type="OptionButton" parent="CenterContainer/VBoxContainer" unique_id=1955186330]
+custom_minimum_size = Vector2(150, 25)
+layout_mode = 2
+size_flags_horizontal = 4
