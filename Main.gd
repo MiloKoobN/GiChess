@@ -1,5 +1,20 @@
 extends Control
 
+# === ПЕРЕМЕННЫЕ ДЛЯ ПРЕМУВОВ (v0.0.4.0) ===
+var premove_from_cell: ColorRect = null
+var premove_to_cell: ColorRect = null
+var has_premove: bool = false
+const COLOR_PREMOVE_HIGHLIGHT = Color("4b648a", 0.6) # Мягкий синий цвет подсветки Lichess
+var player_color: String = "w" # Цвет игрока-человека (всегда "w" для Белых)
+
+var ai_thinking_label: Label
+
+# === ПЕРЕМЕННЫЕ ДЛЯ DRAG-AND-DROP (v0.0.4.0) ===
+var is_dragging: bool = false
+var dragged_piece_icon: TextureRect = null
+var drag_start_cell: ColorRect = null
+var is_drag_move: bool = false
+
 var position_history: Array[String] = [] # Хранит слепки позиций для правила 3-кратного повторения
 
 @export var cell_scene: PackedScene = preload("res://cell.tscn")
@@ -14,6 +29,7 @@ var position_history: Array[String] = [] # Хранит слепки позиц�
 @onready var black_name_label: Label = $CenterContainer/GameLayout/SidePanel/BlackNameLabel
 @onready var btn_resign: Button = $CenterContainer/GameLayout/SidePanel/BtnResign
 @onready var sound_player: AudioStreamPlayer = find_child("SoundPlayer", true, false)
+@onready var sound_game_signal: AudioStreamPlayer = null
 # Вставь это в самый верх main_board.gd вместо старых @onready переменных:
 
 var initial_board = [
@@ -55,16 +71,43 @@ var en_passant_target_square: Vector2i = Vector2i(-1, -1) # Клетка за п
 
 var halfmove_clock: int = 0 # Счетчик полуходов для правила 50 ходов
 
+# Хранение клеток последнего хода для v0.0.3.0
+var last_source_cell: ColorRect = null
+var last_target_cell: ColorRect = null
+# Хранение клетки короля под шахом для v0.0.3.0
+var checked_king_cell: ColorRect = null
+
+# Временное хранение параметров последнего полухода для логгера
+var last_move_meta: Dictionary = {}
+
+# === ПЕРЕМЕННЫЕ ДЛЯ PGN-ЛОГА (v0.0.3.0) ===
+var pgn_history: Array[String] = []       # Массив для хранения истории ходов
+
+@onready var history_label: RichTextLabel = $CenterContainer/GameLayout/SidePanel/HistoryLabel
+
 func _ready() -> void:
+	# 1. СИНХРОНИЗАЦИЯ ЦВЕТА И ОЧЕРЕДИ (v0.1.1.0)
+	player_color = GameManager.actual_player_color
+	current_turn = "w" # Белые всегда ходят первыми по правилам FIDE
+	
+	# 2. ГЕНЕРАЦИЯ ДОСКИ И ФИГУР (Строго один раз!)
 	generate_board()
 	setup_initial_pieces()
 	
-	white_name_label.text = "Вы (Белые)"
+	# 3. НАСТРОЙКА ИМЕН НА ПАНЕЛЯХ (v0.1.1.0: Адаптировано под цвет игрока)
 	if GameManager.game_mode == GameManager.Mode.AI:
-		black_name_label.text = "Stockfish (" + str(GameManager.selected_elo) + " ELO)"
+		if player_color == "w":
+			white_name_label.text = "You (White)"
+			black_name_label.text = "Stockfish (" + str(GameManager.selected_elo) + " ELO)"
+		else:
+			white_name_label.text = "Stockfish (" + str(GameManager.selected_elo) + " ELO)"
+			black_name_label.text = "You (Black)"
 	else:
-		black_name_label.text = "Друг (Черные)"
+		# Для локальной игры оставляем стандарт
+		white_name_label.text = "Player 1 (White)"
+		black_name_label.text = "Player 2 (Black)"
 		
+	# 4. НАСТРОЙКА ТАЙМЕРОВ
 	white_time_left = GameManager.time_control_minutes * 60.0
 	black_time_left = GameManager.time_control_minutes * 60.0
 	update_timer_labels()
@@ -77,10 +120,78 @@ func _ready() -> void:
 	game_timer.autostart = true
 	game_timer.timeout.connect(_on_timer_tick)
 	add_child(game_timer)
+	
+	# 5. АВТО-ПОДКЛЮЧЕНИЕ СИГНАЛА КНОПКИ PGN
+	if has_node("CenterContainer/GameLayout/SidePanel/CopyPNGButton"):
+		$CenterContainer/GameLayout/SidePanel/CopyPNGButton.pressed.connect(_on_copy_pgn_button_pressed)
+		print("--- GiChess: Сигнал кнопки копирования успешно привязан! ---")
+	
+	# 6. ИНИЦИАЛИЗАЦИЯ И ЗАПУСК ЗВУКА СТАРТА
+	sound_game_signal = AudioStreamPlayer.new()
+	sound_game_signal.stream = load("res://assets/sounds/game_signal.mp3") 
+	add_child(sound_game_signal)
+	
+	if is_instance_valid(sound_game_signal):
+		sound_game_signal.play()
+	
+		# 7. СОЗДАНИЕ ИНДИКАТОРА РАЗМЫШЛЕНИЙ ИИ (v0.1.1.0 - с динамической позицией)
+	ai_thinking_label = Label.new()
+	ai_thinking_label.text = "• Stockfish is thinking..."
+	ai_thinking_label.visible = false 
+	ai_thinking_label.add_theme_color_override("font_color", Color(0.0, 0.26, 0.73))
+	
+	# Ссылаемся на SidePanel по одному из твоих путей сцены
+	var side_panel_node: VBoxContainer = null
+	if has_node("CenterContainer/GameLayout/SidePanel"):
+		side_panel_node = $CenterContainer/GameLayout/SidePanel
+	elif has_node("SidePanel"):
+		side_panel_node = $SidePanel
+		
+	if side_panel_node:
+		side_panel_node.add_child(ai_thinking_label)
+		
+		# Задаем индекс положения индикатора на панели (v0.1.1.0)
+		# 3 — если игрок за Черных (ИИ вверху), 4 — если игрок за Белых (ИИ внизу)
+		var target_index: int = 4 if player_color == "b" else 3
+		
+		# Защита: проверяем, что в контейнере достаточно элементов, чтобы не выйти за границы
+		if side_panel_node.get_child_count() > target_index:
+			side_panel_node.move_child(ai_thinking_label, target_index)
+		print("--- GiChess: Индикатор добавлен в SidePanel на индекс: ", target_index, " ---")
+	else:
+		add_child(ai_thinking_label) 
+		print("--- GiChess ВНИМАНИЕ: SidePanel не найдена, индикатор добавлен в корень ---")
+
+	# 8. ТРИГГЕР ПЕРВОГО ХОДА ИИ (v0.1.1.0)
+	# Если игра против бота И игрок выбрал Черных — ИИ делает стартовый ход за Белых
+	if GameManager.game_mode == GameManager.Mode.AI and player_color == "b":
+		print("--- GiChess: Игрок за Черных. СТОКФИШ ДЕЛАЕТ ПЕРВЫЙ ХОД ЗА БЕЛЫХ ---")
+		is_ai_thinking = true
+		
+		# ИСПРАВЛЕНО (v0.1.1.0): Используем правильный метод Godot 4 для добавления задачи в пул
+		WorkerThreadPool.add_task(call_stockfish_process)
+	
+		# 9. КНОПКА ПЕРЕВОРОТА ДОСКИ ДЛЯ ЛОКАЛЬНОЙ ИГРЫ (v0.1.2.0)
+	# Показываем кнопку только в локальном режиме, в режиме ИИ она не нужна
+	if GameManager.game_mode == GameManager.Mode.LOCAL:
+		var flip_button = Button.new()
+		flip_button.text = "Flip Board"
+		flip_button.name = "FlipBoardButton"
+		
+		if has_node("CenterContainer/GameLayout/SidePanel"):
+			side_panel_node = $CenterContainer/GameLayout/SidePanel
+		elif has_node("SidePanel"):
+			side_panel_node = $SidePanel
+			
+		if side_panel_node:
+			side_panel_node.add_child(flip_button)
+			# Подключаем нажатие кнопки к новой функции
+			flip_button.pressed.connect(_on_flip_board_pressed)
+			print("--- GiChess: Кнопка 'Flip Board' успешно добавлена в SidePanel! ---")
 
 func _on_resign_pressed() -> void:
 	game_over = true
-	show_game_over_screen("КОНЕЦ ИГРЫ", "Вы сдались")
+	show_game_over_screen("DEFEAT", "You resigned")
 
 func _on_timer_tick() -> void:
 	if game_over: return
@@ -89,12 +200,12 @@ func _on_timer_tick() -> void:
 		white_time_left -= 1.0
 		if white_time_left <= 0:
 			game_over = true
-			show_game_over_screen("ВРЕМЯ ИСТЕКЛО", "Черные победили!")
+			show_game_over_screen("TIME IS UP", "Black Wins!")
 	else:
 		black_time_left -= 1.0
 		if black_time_left <= 0:
 			game_over = true
-			show_game_over_screen("ВРЕМЯ ИСТЕКЛО", "Белые победили!")
+			show_game_over_screen("TIME IS UP", "White Wins!")
 			
 	update_timer_labels()
 
@@ -124,12 +235,24 @@ func generate_board() -> void:
 	
 	board.columns = 8
 	
+	# Флаг переворота: доска переворачивается, если реальный цвет игрока — Черные ("b")
+	var is_flipped: bool = (GameManager.actual_player_color == "b")
+	
 	for row in range(8):
 		for col in range(8):
+			# Безопасный математический переворот индексов для отрисовки сетки GridContainer
+			var render_row = (7 - row) if is_flipped else row
+			var render_col = (7 - col) if is_flipped else col
+			
 			var cell = cell_scene.instantiate()
+			
+			# Цвет клетки зависит от физического положения (row + col),
+			# чтобы левый нижний угол для белых/черных всегда оставался темным по правилам FIDE
 			var current_color = light_color if (row + col) % 2 == 0 else dark_color
-			var chess_name = files[col] + ranks[row]
-			var grid_pos = Vector2i(col, row)
+			
+			# Шахматное имя (например, "a1") и логическая позиция привязываются строго к рендер-индексам
+			var chess_name = files[render_col] + ranks[render_row]
+			var grid_pos = Vector2i(render_col, render_row)
 			
 			cell.setup(grid_pos, chess_name, current_color)
 			cell.name = chess_name
@@ -140,8 +263,17 @@ func generate_board() -> void:
 			
 	# Ждем окончания кадра отрисовки интерфейса, чтобы узнать точные экранные координаты доски
 	await get_tree().process_frame
-	create_external_notation(ranks, files)
-	print("--- GiChess: Внешняя разметка Lichess успешно создана! ---")
+	
+	# Разворачиваем буквенные и цифры разметки, чтобы они совпали с перевернутой доской
+	var display_ranks = ranks.duplicate()
+	var display_files = files.duplicate()
+	if is_flipped:
+		display_ranks.reverse()
+		display_files.reverse()
+		
+	create_external_notation(display_ranks, display_files)
+	print("--- GiChess: Доска успешно создана! [Переворот для Черных: ", is_flipped, "] ---")
+
 
 func create_external_notation(ranks: Array, files: Array) -> void:
 	var board_size = board.size
@@ -208,35 +340,81 @@ func _notification(what: int) -> void:
 func setup_initial_pieces() -> void:
 	var files = ["a", "b", "c", "d", "e", "f", "g", "h"]
 	var ranks = ["8", "7", "6", "5", "4", "3", "2", "1"]
+	
 	for row in range(8):
 		for col in range(8):
 			var piece_char = initial_board[row][col]
-			if piece_char == ".": continue
+			if piece_char == ".": 
+				continue
+				
 			var piece_color = "w" if piece_char == piece_char.to_upper() else "b"
 			var piece_type = piece_char.to_upper()
+			
+			# Фигуры всегда считываются из стандартного массива по индексам [row][col] 
+			# и железно привязываются к своим законным именам (например, e1, d8).
 			var chess_name = files[col] + ranks[row]
+			
+			# Благодаря cells_dict фигура встанет на клетку с этим именем, 
+			# где бы эта клетка физически ни находилась на экране после переворота!
 			if cells_dict.has(chess_name):
 				cells_dict[chess_name].set_piece(piece_type, piece_color)
 
 func _on_cell_clicked(_grid_pos: Vector2i, chess_coordinate: String) -> void:
-	if game_over or is_ai_thinking: return
+	if game_over: return
 	var clicked_cell = cells_dict[chess_coordinate]
-	if selected_cell == null:
-		if clicked_cell.piece_data != null and clicked_cell.piece_data["color"] == current_turn:
-			if GameManager.game_mode == GameManager.Mode.AI and current_turn == "b": return
-			select_cell(clicked_cell)
+	
+	# А) НАШ ХОД (или любой ход в ЛОКАЛЬНОЙ игре)
+	if current_turn == player_color or GameManager.game_mode == GameManager.Mode.LOCAL:
+		if is_ai_thinking: return # Защита от кликов, пока ИИ думает над своим ходом
+		
+		if selected_cell == null:
+			if clicked_cell.piece_data != null and clicked_cell.piece_data["color"] == current_turn:
+				select_cell(clicked_cell)
+				start_drag(clicked_cell)
+		else:
+			if selected_cell == clicked_cell:
+				deselect_all()
+				return
+			if clicked_cell.piece_data != null and clicked_cell.piece_data["color"] == current_turn:
+				deselect_all()
+				select_cell(clicked_cell)
+				start_drag(clicked_cell)
+				return
+			if is_move_completely_legal(selected_cell, clicked_cell):
+				var uci_move = selected_cell.chess_coordinate + clicked_cell.chess_coordinate
+				moves_history.append(uci_move)
+				make_move(selected_cell, clicked_cell)
+				
+		# Б) ХОД ИИ STOCKFISH (Планирование премува кликами в режиме AI)
 	else:
-		if selected_cell == clicked_cell:
-			deselect_all()
-			return
-		if clicked_cell.piece_data != null and clicked_cell.piece_data["color"] == current_turn:
-			deselect_all()
-			select_cell(clicked_cell)
-			return
-		if is_move_completely_legal(selected_cell, clicked_cell):
-			var uci_move = selected_cell.chess_coordinate + clicked_cell.chess_coordinate
-			moves_history.append(uci_move)
-			make_move(selected_cell, clicked_cell)
+		if GameManager.game_mode == GameManager.Mode.AI:
+			if selected_cell == null:
+				if clicked_cell.piece_data != null and clicked_cell.piece_data["color"] == player_color:
+					select_cell(clicked_cell)
+					start_drag(clicked_cell)
+			else:
+				if selected_cell == clicked_cell:
+					deselect_all()
+					return
+				
+				# ХИТРОСТЬ v0.0.4.0: Если кликнули на свою фигуру, проверяем — умеет ли выбранная фигура туда ходить геометрически?
+				if clicked_cell.piece_data != null and clicked_cell.piece_data["color"] == player_color:
+					if is_move_base_legal(selected_cell, clicked_cell):
+						# Если базовая геометрия позволяет (например, конь прыгает буквой Г на свою пешку) — ЗАПИСЫВАЕМ ПРЕМУВ!
+						set_premove(selected_cell, clicked_cell)
+						deselect_all()
+						return
+					else:
+						# Если геометрия не позволяет — значит игрок просто хочет перевыбрать фигуру
+						deselect_all()
+						select_cell(clicked_cell)
+						start_drag(clicked_cell)
+						return
+				
+				# Если кликнули на пустую клетку или вражескую фигуру
+				if selected_cell != clicked_cell:
+					set_premove(selected_cell, clicked_cell)
+				deselect_all()
 
 func select_cell(cell: ColorRect) -> void:
 	selected_cell = cell
@@ -263,8 +441,13 @@ func make_move(from_cell: ColorRect, to_cell: ColorRect) -> void:
 	var is_capture: bool = to_cell.piece_data != null
 	
 	# === ЛОГИКА ВЗЯТИЯ НА ПРОХОДЕ (Удаление врага) ===
+	# Защита v0.1.1.0: Если фигура почему-то не найдена на стартовой клетке, прерываем логику во избежание краша
+	if moving_piece == null:
+		print("--- GiChess ОШИБКА: Попытка сделать ход пустой фигурой со стартовой клетки! ---")
+		return
+		
+	# === ЛОГИКА ВЗЯТИЯ НА ПРОХОДЕ (Удаление врага) ===
 	if moving_piece["type"] == "P" and target == en_passant_target_square:
-		# Находим вражескую пешку (она стоит на том же столбце, но на старой строке старта)
 		var enemy_pawn_cell = get_cell_by_grid(target.x, start.y)
 		enemy_pawn_cell.clear_piece()
 		is_capture = true # Считаем это взятием для звукового эффекта!
@@ -292,21 +475,59 @@ func make_move(from_cell: ColorRect, to_cell: ColorRect) -> void:
 			get_cell_by_grid(3, 0).set_piece("R", "b")
 			get_cell_by_grid(0, 0).clear_piece()
 
-	# Физически перемещаем фигуру на доске
-	to_cell.set_piece(moving_piece["type"], moving_piece["color"])
-	from_cell.clear_piece()
+		# === АНИМАЦИЯ ПЕРЕМЕЩЕНИЯ ФИГУРЫ (v0.0.3.0 / Исправление раздвоения v0.0.4.0) ===
+	var piece_texture = from_cell.get_piece_texture()
 	
-		# === ОБНОВЛЕНИЕ СЧЕТЧИКА ДЛЯ ПРАВИЛА 50 ХОДОВ ===
-	if moving_piece["type"] == "P" or is_capture:
-		halfmove_clock = 0 # Сброс, если походила пешка или съели фигуру
+	# СЛУЧАЙ 1: Ход через Drag-and-Drop — переставляем мгновенно и ЧИСТИМ старую клетку!
+	if is_drag_move:
+		to_cell.set_piece(moving_piece["type"], moving_piece["color"])
+		from_cell.clear_piece()
+		print("--- GiChess: Ход выполнен через Drag-and-Drop без раздвоения ---")
+		
+	# СЛУЧАЙ 2: Обычный клик или ход ИИ — работает старый добрый плавный Твин
+	elif piece_texture:
+		# 1. Создаем временную иконку на доске для плавного полета
+		var temp_icon = TextureRect.new()
+		temp_icon.texture = piece_texture
+		temp_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		temp_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		
+		temp_icon.size = from_cell.size
+		temp_icon.global_position = from_cell.global_position
+		add_child(temp_icon)
+		
+		from_cell.set_piece_icon_visible(false)
+		from_cell.clear_piece()
+		from_cell.set_piece_icon_visible(true)
+		
+		to_cell.set_piece_icon_visible(false)
+		
+		# 2. Настраиваем и запускаем Твин
+		var tween = create_tween()
+		tween.tween_property(temp_icon, "global_position", to_cell.global_position, 0.18)\
+			.set_trans(Tween.TRANS_QUAD)\
+			.set_ease(Tween.EASE_OUT)
+			
+		await tween.finished
+		
+		# 3. Фигура долетела
+		to_cell.set_piece_icon_visible(true)
+		to_cell.set_piece(moving_piece["type"], moving_piece["color"])
+		temp_icon.queue_free()
 	else:
-		halfmove_clock += 1 # Увеличиваем счетчик при обычном ходе
+		to_cell.set_piece(moving_piece["type"], moving_piece["color"])
+		from_cell.clear_piece()
+
+	# === ОБНОВЛЕНИЕ СЧЕТЧИКА ДЛЯ ПРАВИЛА 50 ХОДОВ ===
+	if moving_piece["type"] == "P" or is_capture:
+		halfmove_clock = 0 
+	else:
+		halfmove_clock += 1 
 	print("Полуходов без взятий и пешек: ", halfmove_clock)
 
-	# === БЛОК ЗВУКА ПОД ТВОИ ФАЙЛЫ MOVE.MP3 И CAPTURE.MP3 ===
+		# === ЗВУК ИГРАЕТ В МОМЕНТ ПРИЗЕМЛЕНИЯ ИЛИ МГНОВЕННО ПРИ ПРЕМУВЕ (v0.0.4.0) ===
 	if sound_player:
 		var sound_path = "res://assets/sounds/capture.mp3" if is_capture else "res://assets/sounds/move.mp3"
-		
 		if ResourceLoader.exists(sound_path):
 			sound_player.stream = load(sound_path)
 			sound_player.play()
@@ -325,7 +546,9 @@ func make_move(from_cell: ColorRect, to_cell: ColorRect) -> void:
 			if start == Vector2i(0, 0): black_rook_a8_moved = true
 			elif start == Vector2i(7, 0): black_rook_h8_moved = true
 
+	# === СБРОС ВЫДЕЛЕНИЯ И ВКЛЮЧЕНИЕ ПОДСВЕТКИ ХОДА ===
 	deselect_all()
+	update_move_highlight(from_cell, to_cell)
 	
 	# Превращение пешки
 	if moving_piece["type"] == "P" and (to_cell.grid_position.y == 0 or to_cell.grid_position.y == 7):
@@ -336,18 +559,64 @@ func make_move(from_cell: ColorRect, to_cell: ColorRect) -> void:
 			show_promotion_menu(moving_piece["color"])
 		return
 	
-		# === ЗАПИСЬ СЛЕПКА ПОЗИЦИИ ДЛЯ ПРАВИЛА 3 ХОДОВ ===
+	# === ЗАПОМИНАЕМ ХОД ДЛЯ PGN-ЛОГА (v0.0.3.0) ===
+	last_move_meta = {
+		"piece": moving_piece.duplicate(),
+		"start": start,
+		"target": target,
+		"is_capture": is_capture
+	}
+
+	# === ЗАПИСЬ СЛЕПКА ПОЗИЦИИ ДЛЯ ПРАВИЛА 3 ХОДОВ ===
 	var current_snapshot = generate_position_snapshot()
 	position_history.append(current_snapshot)
 	
 	complete_turn()
+## Дополнительная функция для менеджмента подсветки
+func update_move_highlight(from_cell: ColorRect, to_cell: ColorRect) -> void:
+	# 1. Сбрасываем старую подсветку, если клетки существуют
+	if is_instance_valid(last_source_cell):
+		last_source_cell.reset_highlight()
+	if is_instance_valid(last_target_cell):
+		last_target_cell.reset_highlight()
+	
+	# 2. Запоминаем текущие клетки хода
+	last_source_cell = from_cell
+	last_target_cell = to_cell
+	
+	# 3. Включаем новую подсветку
+	last_source_cell.highlight_last_move()
+	last_target_cell.highlight_last_move()
 
 func complete_turn() -> void:
-	current_turn = "b" if current_turn == "w" else "w"
+	# === ВЫЧИСЛЕНИЕ СТАТУСА ШАХА И МАТА ДЛЯ PGN-ЛОГА (v0.0.3.0) ===
+	# Так как текущий игрок ТОЛЬКО ЧТО сделал ход, мы проверяем, 
+	# объявил ли этот ход ШАХ или МАТ вражескому королю (оппоненту).
+	var opponent_color = "b" if current_turn == "w" else "w"
+	var opponent_king_in_check = is_king_in_check(opponent_color)
+	var opponent_has_moves = has_any_legal_moves(opponent_color)
+	var is_mate_announced = opponent_king_in_check and not opponent_has_moves
+
+	# Генерация нотации и запись хода в массив истории
+	if not last_move_meta.is_empty():
+		var move_str = generate_move_notation(
+			last_move_meta["piece"], 
+			last_move_meta["start"], 
+			last_move_meta["target"], 
+			last_move_meta["is_capture"],
+			opponent_king_in_check,
+			is_mate_announced
+		)
+		pgn_history.append(move_str)
+		update_history_ui()
+		last_move_meta.clear() # Очищаем временный контейнер полухода
+
+	# === ОФИЦИАЛЬНАЯ СМЕНА ОЧЕРЕДИ ХОДА ===
+	current_turn = opponent_color
 	
-	# 1. Проверяем классический Мат и Пат
-	var has_moves = has_any_legal_moves(current_turn)
-	var king_in_check = is_king_in_check(current_turn)
+	# 1. Проверяем классический Мат и Пат (уже для нового игрока)
+	var has_moves = opponent_has_moves
+	var king_in_check = opponent_king_in_check
 	
 	if not has_moves:
 		game_over = true
@@ -363,14 +632,8 @@ func complete_turn() -> void:
 		game_over = true
 		show_game_over_screen("НИЧЬЯ", "Правило 50 ходов")
 		return
-	
-		# 2. Проверяем правило 50 ходов... (этот блок у тебя уже есть)
-	if halfmove_clock >= 100:
-		game_over = true
-		show_game_over_screen("НИЧЬЯ", "Правило 50 ходов")
-		return
 		
-	# === НОВОЕ: ПРОВЕРКА ТРЕХКРАТНОГО ПОВТОРЕНИЯ ПОЗИЦИИ ===
+	# === ПРОВЕРКА ТРЕХКРАТНОГО ПОВТОРЕНИЯ ПОЗИЦИИ ===
 	if position_history.size() > 0:
 		var last_snapshot = position_history[position_history.size() - 1]
 		var repetitions = position_history.count(last_snapshot)
@@ -385,12 +648,76 @@ func complete_turn() -> void:
 		show_game_over_screen("НИЧЬЯ", "Недостаточно материала для мата")
 		return
 		
+		# === ОБНОВЛЕНИЕ ПОДСВЕТКИ ШАХА (Исправлено в v0.0.5.0 для взятий) ===
+	# Перепроверяем шах заново: теперь, когда фигура точно приземлилась, данные на доске стабильны
+	king_in_check = is_king_in_check(current_turn)
+	
 	if king_in_check:
 		print("Внимание: Королю объявлен ШАХ!")
+		# Ищем короля, которому объявили шах, и красим в красный
+		for chess_name in cells_dict:
+			var cell = cells_dict[chess_name]
+			if cell.piece_data and cell.piece_data["type"] == "K" and cell.piece_data["color"] == current_turn:
+				checked_king_cell = cell
+				checked_king_cell.highlight_check()
+				break
+	else:
+		# Если шаха НЕТ, принудительно убираем красный цвет с прошлого короля
+		if is_instance_valid(checked_king_cell):
+			checked_king_cell.reset_highlight()
+			
+			# Защита: если этот король только что ушел из-под шаха (последний ход),
+			# возвращаем его клетке правильный желтый цвет последнего хода!
+			if checked_king_cell == last_source_cell or checked_king_cell == last_target_cell:
+				checked_king_cell.highlight_last_move()
+				
+			checked_king_cell = null
+			
+			# Защита: если этот король только что ушел из-под шаха (последний ход),
+			# возвращаем его клетке правильный желтый цвет последнего хода!
+			if checked_king_cell == last_source_cell or checked_king_cell == last_target_cell:
+				checked_king_cell.highlight_last_move()
+				
+			checked_king_cell = null
 		
-	# Если игра продолжается и ход бота — запускаем Stockfish
-	if GameManager.game_mode == GameManager.Mode.AI and current_turn == "b" and not game_over:
+			# === ИСПРАВЛЕНИЕ v0.1.1.0: АВТО-ХОД ИИ ПОД ЛЮБОЙ ЦВЕТ СТОРОНЫ ===
+	# Запускаем Stockfish только если наступил НЕ ход игрока (current_turn != player_color)
+	if GameManager.game_mode == GameManager.Mode.AI and current_turn != player_color and not game_over:
+		print("--- GiChess: Ход перешел к ИИ. Запуск Stockfish за сторону: ", current_turn, " ---")
 		get_ai_move()
+
+			# === ОБНОВЛЕНИЕ ТОЧЕК ХОДА ПРИ DRAG-AND-DROP ВО ВРЕМЯ ХОДА ИИ (v0.0.4.0) ===
+	# Если в момент хода ИИ игрок держит фигуру в руках — заново рисуем для неё серые точки ходов!
+	if is_dragging and is_instance_valid(drag_start_cell):
+		select_cell(drag_start_cell)
+		
+			# === АВТО-ИСПОЛНЕНИЕ ПРЕМУВА С СОЧНОЙ ПАУЗОЙ (v0.0.4.0) ===
+	if current_turn == player_color and has_premove and not game_over:
+		var p_from = premove_from_cell
+		var p_to = premove_to_cell
+		
+		# Мгновенно очищаем буфер и синюю подсветку премува перед ожиданием
+		cancel_premove()
+		
+		# Делаем микро-паузу в 0.12 секунды, чтобы игрок увидел ход ИИ и услышал первый щелчок!
+		await get_tree().create_timer(0.10).timeout
+		
+		# Защита: проверяем, не завершилась ли игра или не удалилась ли сцена за время паузы
+		if game_over or not is_instance_valid(self) or not is_instance_valid(p_from) or not is_instance_valid(p_to):
+			return
+		
+		# Теперь проверяем легальность нашего хода в наступившей позиции
+		if is_move_completely_legal(p_from, p_to):
+			print("⚡ GiChess: Премув легален! Авто-исполнение после микро-паузы.")
+			var uci_move = p_from.chess_coordinate + p_to.chess_coordinate
+			moves_history.append(uci_move)
+			
+			# Запускаем ход без Твин-анимации, так как задержку мы уже выдержали искусственно!
+			is_drag_move = true
+			make_move(p_from, p_to)
+			is_drag_move = false
+		else:
+			print("❌ GiChess: Премув стал нелегальным и был автоматически отменен.")
 
 func get_ai_move() -> void:
 	is_ai_thinking = true
@@ -398,16 +725,38 @@ func get_ai_move() -> void:
 	thread.start(call_stockfish_process)
 
 func call_stockfish_process() -> String:
+	# БЕЗОПАСНОСТЬ 1: Проверяем, жива ли еще сцена доски, пока создавался поток
+	if not is_instance_valid(self): return ""
+	
+	# ВКЛЮЧАЕМ ИНДИКАТОР: Stockfish начинает думать (v0.1.1.0)
+	if is_instance_valid(ai_thinking_label):
+		ai_thinking_label.call_deferred("set_visible", true)
+	
 	var path_to_exe = ProjectSettings.globalize_path("res://bin/stockfish.exe")
 	if OS.get_name() == "macOS" or OS.get_name() == "Linux":
 		path_to_exe = ProjectSettings.globalize_path("res://bin/stockfish")
+		
 	if not FileAccess.file_exists(path_to_exe):
-		call_deferred("_on_ai_move_received", "")
+		if is_instance_valid(self):
+			# ВЫКЛЮЧАЕМ ИНДИКАТОР при ошибке
+			if is_instance_valid(ai_thinking_label):
+				ai_thinking_label.call_deferred("set_visible", false)
+			call_deferred("_on_ai_move_received", "")
 		return ""
+		
 	var pipes = OS.execute_with_pipe(path_to_exe, [])
-	if pipes.size() == 0:
-		call_deferred("_on_ai_move_received", "")
+	
+	# БЕЗОПАСНОСТЬ 2: Защита от краша "Index out of bounds (size() = 0)". 
+	# Если пайпы пустые или в них нет stdio — не трогаем их и выходим!
+	if pipes.is_empty() or not pipes.has("stdio"):
+		print("--- GiChess ОШИБКА: Каналы связи со Stockfish не были открыты ОС ---")
+		if is_instance_valid(self):
+			# ВЫКЛЮЧАЕМ ИНДИКАТОР при ошибке
+			if is_instance_valid(ai_thinking_label):
+				ai_thinking_label.call_deferred("set_visible", false)
+			call_deferred("_on_ai_move_received", "")
 		return ""
+		
 	var pipe_in = pipes["stdio"]
 	
 	pipe_in.store_line("setoption name UCI_LimitStrength value true")
@@ -416,22 +765,16 @@ func call_stockfish_process() -> String:
 	var position_cmd = "position startpos"
 	if moves_history.size() > 0:
 		position_cmd += " moves " + " ".join(moves_history)
-		# Внутри метода call_stockfish_process()
 	
-		# Внутри метода call_stockfish_process() в main_board.gd
 	pipe_in.store_line(position_cmd)
 	
 	var wtime_ms = int(white_time_left * 1000)
 	var btime_ms = int(black_time_left * 1000)
 	
-	# УМНОЕ УПРАВЛЕНИЕ ВРЕМЕНЕМ:
-	# Если сделано меньше 12 полуходов (6 полных ходов обоих игроков) — это дебют.
-	# В дебюте заставляем бота отвечать быстро (максимум 1.5 секунды), чтобы не зависал на e4 c5.
 	if moves_history.size() < 12:
-		var debut_time = 1500 # 1.5 секунды
+		var debut_time = 1500
 		pipe_in.store_line("go wtime " + str(wtime_ms) + " btime " + str(btime_ms) + " movetime " + str(debut_time))
 	else:
-		# После дебюта снимаем ограничения! Бот сам решает, сколько думать, основываясь на времени на часах
 		pipe_in.store_line("go wtime " + str(wtime_ms) + " btime " + str(btime_ms))
 		
 	pipe_in.flush()
@@ -444,9 +787,18 @@ func call_stockfish_process() -> String:
 			var tokens = line.split(" ")
 			if tokens.size() > 1: best_move = tokens[1]
 			break
+			
 	pipe_in.store_line("quit")
 	pipe_in.close()
-	call_deferred("_on_ai_move_received", best_move)
+	
+	# ВЫКЛЮЧАЕМ ИНДИКАТОР: Stockfish закончил думать (v0.1.1.0)
+	if is_instance_valid(ai_thinking_label):
+		ai_thinking_label.call_deferred("set_visible", false)
+	
+	# БЕЗОПАСНОСТЬ 3: Передаем ход в GUI, только если игрок еще не закрыл доску и не вышел в меню
+	if is_instance_valid(self):
+		call_deferred("_on_ai_move_received", best_move)
+		
 	return best_move
 
 func _on_ai_move_received(ai_move: String) -> void:
@@ -678,6 +1030,23 @@ func _on_promotion_selected(chosen_type: String, piece_color: String) -> void:
 	complete_turn()
 
 func show_game_over_screen(title: String, result: String) -> void:
+	# Единый сигнал завершения матча (v0.1.1.0)
+	if is_instance_valid(sound_game_signal):
+		sound_game_signal.play()
+	# === АВТОМАТИЧЕСКИЙ ПЕРЕВОД ДЛЯ МЕЖДУНАРОДНОГО РЕЛИЗА (v0.0.5.0) ===
+	var eng_title = title
+	if title == "МАТ": eng_title = "CHECKMATE"
+	elif title == "ПАТ": eng_title = "STALEMATE"
+	elif title == "НИЧЬЯ": eng_title = "DRAW"
+	
+	var eng_result = result
+	if result == "Белые победили!": eng_result = "White Wins!"
+	elif result == "Черные победили!": eng_result = "Black Wins!"
+	elif result == "Ничья": eng_result = "Draw"
+	elif result.contains("Правило 50 ходов"): eng_result = "Draw (50-move rule)"
+	elif result.contains("3-кратное повторение"): eng_result = "Draw (3fold repetition)"
+	elif result.contains("Недостаточно материала"): eng_result = "Draw (Insufficient material)"
+
 	var game_over_ui = PanelContainer.new()
 	var style = StyleBoxFlat.new()
 	style.bg_color = Color("262421")
@@ -686,21 +1055,26 @@ func show_game_over_screen(title: String, result: String) -> void:
 	style.set_corner_radius_all(12)
 	style.set_content_margin_all(25)
 	game_over_ui.add_theme_stylebox_override("panel", style)
+	
 	var v_box = VBoxContainer.new()
 	v_box.add_theme_constant_override("separation", 15)
 	game_over_ui.add_child(v_box)
+	
 	var lbl_title = Label.new()
-	lbl_title.text = title
+	lbl_title.text = eng_title
 	lbl_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl_title.add_theme_font_size_override("font_size", 32)
 	v_box.add_child(lbl_title)
+	
 	var lbl_result = Label.new()
-	lbl_result.text = result
+	lbl_result.text = eng_result
 	lbl_result.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl_result.add_theme_font_size_override("font_size", 20)
 	v_box.add_child(lbl_result)
+	
+	# === КНОПКА: В ГЛАВНОЕ МЕНЮ (МЕЖДУНАРОДНАЯ) ===
 	var btn_menu = Button.new()
-	btn_menu.text = "В главное меню"
+	btn_menu.text = "Main Menu"
 	btn_menu.custom_minimum_size = Vector2(200, 50)
 	var btn_style = StyleBoxFlat.new()
 	btn_style.bg_color = Color("b58863")
@@ -708,6 +1082,21 @@ func show_game_over_screen(title: String, result: String) -> void:
 	btn_menu.add_theme_stylebox_override("normal", btn_style)
 	btn_menu.pressed.connect(_on_back_to_menu_pressed)
 	v_box.add_child(btn_menu)
+	
+	# === КНОПКА: АНАЛИЗИРОВАТЬ ПАРТИЮ (МЕЖДУНАРОДНАЯ) ===
+	if moves_history.size() > 0:
+		var btn_analyze = Button.new()
+		btn_analyze.text = "Analyze Game"
+		btn_analyze.custom_minimum_size = Vector2(200, 50)
+		
+		var btn_analyze_style = StyleBoxFlat.new()
+		btn_analyze_style.bg_color = Color("4b648a") # Наш фирменный синий для отличия
+		btn_analyze_style.set_corner_radius_all(6)
+		btn_analyze.add_theme_stylebox_override("normal", btn_analyze_style)
+		
+		btn_analyze.pressed.connect(_on_analyze_pressed)
+		v_box.add_child(btn_analyze)
+	
 	add_child(game_over_ui)
 	game_over_ui.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 
@@ -722,6 +1111,14 @@ func _on_back_to_menu_pressed() -> void:
 	if bottom_files: bottom_files.queue_free()
 	
 	get_tree().change_scene_to_file("res://main_menu.tscn")
+
+func _on_analyze_pressed() -> void:
+	# Копируем историю текущей партии в GameManager, чтобы сцена анализа её подхватила
+	GameManager.last_moves_history = moves_history.duplicate()
+	GameManager.last_pgn_history = pgn_history.duplicate()
+	
+	# Меняем сцену на комнату анализа
+	get_tree().change_scene_to_file("res://analysis_room.tscn")
 
 # Проверка ничьей по недостатку материала (ФИДЕ)
 func is_insufficient_material() -> bool:
@@ -790,3 +1187,254 @@ func generate_position_snapshot() -> String:
 	snapshot += "|EP:" + str(en_passant_target_square)
 	
 	return snapshot
+
+## Проверяет и подсвечивает короля, если ему объявлен шах
+func update_check_highlight() -> void:
+	# 1. Сначала всегда сбрасываем прошлую подсветку шаха, если она была
+	if is_instance_valid(checked_king_cell):
+		checked_king_cell.reset_highlight()
+		# Важный нюанс: если клетка короля была частью последнего хода, возвращаем ей желтый цвет!
+		if checked_king_cell == last_source_cell or checked_king_cell == last_target_cell:
+			checked_king_cell.highlight_last_move()
+		checked_king_cell = null
+		
+	# 2. Проверяем, есть ли шах текущему игроку (или вообще на доске)
+	# Предполагаем, что у тебя в коде есть переменная current_turn ("w" или "b")
+	if is_king_in_check(current_turn):
+		# Ищем клетку, где физически стоит этот король
+		for chess_name in cells_dict:
+			var cell = cells_dict[chess_name]
+			if cell.piece_data and cell.piece_data["type"] == "K" and cell.piece_data["color"] == "w" if current_turn == "w" else cell.piece_data["color"] == "b":
+				checked_king_cell = cell
+				checked_king_cell.highlight_check()
+				break
+
+## Генерирует эталонную шахматную нотацию (например: e4, Nf3+, O-O, Bxf7#)
+func generate_move_notation(moving_piece: Dictionary, start: Vector2i, target: Vector2i, is_capture: bool, is_check: bool, is_mate: bool) -> String:
+	# 1. Обработка рокировки (Строго через английскую букву O)
+	if moving_piece["type"] == "K" and abs(target.x - start.x) == 2:
+		var castle_str = "O-O" if target.x == 6 else "O-O-O"
+		if is_mate: return castle_str + "#"
+		if is_check: return castle_str + "+"
+		return castle_str
+			
+	# 2. Буквенное обозначение фигуры
+	var piece_letter = ""
+	match moving_piece["type"]:
+		"N": piece_letter = "N"
+		"B": piece_letter = "B"
+		"R": piece_letter = "R"
+		"Q": piece_letter = "Q"
+		"K": piece_letter = "K"
+		"P": piece_letter = ""
+		
+	# 3. Координаты поля
+	var files = ["a", "b", "c", "d", "e", "f", "g", "h"]
+	var ranks = ["8", "7", "6", "5", "4", "3", "2", "1"]
+	var target_coord = files[target.x] + ranks[target.y]
+	
+	# 4. Обработка взятия
+	var capture_sign = ""
+	if is_capture:
+		capture_sign = "x"
+		if moving_piece["type"] == "P":
+			piece_letter = files[start.x] # пешка при взятии указывает свою вертикаль (exd5)
+			
+	var base_notation = piece_letter + capture_sign + target_coord
+	
+	# 5. Приоритет суффиксов
+	if is_mate:
+		return base_notation + "#"
+	elif is_check:
+		return base_notation + "+"
+		
+	return base_notation
+
+## Обновляет RichTextLabel на боковой панели с поддержкой скролла и кастомным цветом текста
+func update_history_ui() -> void:
+	if not is_instance_valid(history_label):
+		return
+		
+	# Принудительно включаем поддержку BBCode, чтобы работали теги цвета
+	history_label.bbcode_enabled = true
+		
+	var text = ""
+	var move_num = 1
+	
+	# Проходим по истории ходов парами (Ход белых + Ход черных)
+	for i in range(0, pgn_history.size(), 2):
+		var white_move = pgn_history[i]
+		var black_move = ""
+		
+		if i + 1 < pgn_history.size():
+			black_move = pgn_history[i + 1]
+			
+		# Форматируем ходы вертикальным списком
+		text += str(move_num) + ". " + white_move + " " + black_move + "\n"
+		move_num += 1
+		
+	# Оборачиваем весь текст в BBCode-тег цвета #161512 для идеального контраста
+	history_label.text = "[color=#161512]" + text + "[/color]"
+
+## Вызывается при нажатии на кнопку "Копировать PGN"
+func _on_copy_pgn_button_pressed() -> void:
+	print("--- Кнопка нажата! Начинаю сборку PGN ---") # Если эта строка появится в консоли, значит клик сработал!
+	
+	if pgn_history.is_empty():
+		print("История ходов пуста, копировать нечего.")
+		return
+		
+	var pgn_export_text = ""
+	var move_num = 1
+	
+	for i in range(0, pgn_history.size(), 2):
+		var white_move = pgn_history[i]
+		var black_move = ""
+		
+		if i + 1 < pgn_history.size():
+			black_move = pgn_history[i + 1]
+			
+		if black_move != "":
+			pgn_export_text += str(move_num) + ". " + white_move + " " + black_move + " "
+		else:
+			pgn_export_text += str(move_num) + ". " + white_move + " "
+			
+		move_num += 1
+		
+	var final_pgn = pgn_export_text.strip_edges()
+	
+	# Копируем в буфер обмена операционной системы
+	DisplayServer.clipboard_set(final_pgn)
+	
+	print("ЖЕЛЕЗОБЕТОННО СКОПИРОВАНО В БУФЕР: ", final_pgn)
+
+# === СИСТЕМА ПЕРЕМЕЩЕНИЯ ФИГУР (v0.0.4.0) ===
+
+func _process(_delta: float) -> void:
+	# Если фигура зажата — плавно двигаем временную иконку за курсором
+	if is_dragging and dragged_piece_icon and is_instance_valid(dragged_piece_icon):
+		dragged_piece_icon.global_position = get_global_mouse_position() - dragged_piece_icon.size / 2
+
+func _input(event: InputEvent) -> void:
+	if game_over: return
+	
+	# ОТПУСКАНИЕ МЫШКИ (Drop)
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		if is_dragging:
+			end_drag()
+
+func start_drag(cell: ColorRect) -> void:
+	is_dragging = true
+	drag_start_cell = cell
+	
+	dragged_piece_icon = TextureRect.new()
+	dragged_piece_icon.texture = cell.get_piece_texture()
+	dragged_piece_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	dragged_piece_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	dragged_piece_icon.size = cell.size
+	dragged_piece_icon.z_index = 100
+	add_child(dragged_piece_icon)
+	
+	cell.set_piece_icon_visible(false)
+
+func end_drag() -> void:
+	is_dragging = false
+	var target_cell = get_cell_under_mouse()
+	
+	if is_instance_valid(drag_start_cell):
+		drag_start_cell.set_piece_icon_visible(true)
+		
+	if dragged_piece_icon and is_instance_valid(dragged_piece_icon):
+		dragged_piece_icon.queue_free()
+		dragged_piece_icon = null
+	
+	if target_cell and target_cell != drag_start_cell:
+		# УМНОЕ УСЛОВИЕ (v0.0.4.0): Ход засчитывается, если сейчас очередь игрока-человека 
+		# ИЛИ если включен режим локальной игры на одном устройстве (тогда ходить можно за оба цвета!)
+		if current_turn == player_color or GameManager.game_mode == GameManager.Mode.LOCAL:
+			if is_move_completely_legal(drag_start_cell, target_cell):
+				var uci_move = drag_start_cell.chess_coordinate + target_cell.chess_coordinate
+				moves_history.append(uci_move)
+				cancel_premove()
+				is_drag_move = true
+				make_move(drag_start_cell, target_cell)
+				is_drag_move = false
+			else:
+				deselect_all()
+				
+		# СЛУЧАЙ Б: СЕЙЧАС ХОД ИИ STOCKFISH (Запись Премува!)
+		else:
+			if GameManager.game_mode == GameManager.Mode.AI:
+				if drag_start_cell != target_cell:
+					set_premove(drag_start_cell, target_cell)
+			deselect_all()
+			
+	drag_start_cell = null
+
+# Сканируем, над какой клеткой находится мышь
+func get_cell_under_mouse() -> ColorRect:
+	for chess_name in cells_dict:
+		var cell = cells_dict[chess_name]
+		if is_instance_valid(cell) and cell.get_global_rect().has_point(get_global_mouse_position()):
+			return cell
+	return null
+
+# === СИСТЕМА УПРАВЛЕНИЯ ПРЕМУВАМИ (v0.0.4.0) ===
+
+func set_premove(from_cell: ColorRect, to_cell: ColorRect) -> void:
+	cancel_premove() # Сбрасываем предыдущий премув
+	
+	premove_from_cell = from_cell
+	premove_to_cell = to_cell
+	has_premove = true
+	
+	# Используем дефер, чтобы покрасить клетки строго ПОСЛЕ завершения всех системных событий драга
+	call_deferred("_apply_premove_colors")
+
+func _apply_premove_colors() -> void:
+	if has_premove and is_instance_valid(premove_from_cell) and is_instance_valid(premove_to_cell):
+		premove_from_cell.color = COLOR_PREMOVE_HIGHLIGHT
+		premove_to_cell.color = COLOR_PREMOVE_HIGHLIGHT
+		print("--- GiChess: Премув зафиксирован! Старт и финиш принудительно синие ---")
+
+func cancel_premove() -> void:
+	if has_premove:
+		if is_instance_valid(premove_from_cell): premove_from_cell.reset_highlight()
+		if is_instance_valid(premove_to_cell): premove_to_cell.reset_highlight()
+		
+		premove_from_cell = null
+		premove_to_cell = null
+		has_premove = false
+
+func _on_flip_board_pressed() -> void:
+	if game_over: return
+	
+	# Меняем логический цвет отображения на противоположный
+	if GameManager.actual_player_color == "w":
+		GameManager.actual_player_color = "b"
+	else:
+		GameManager.actual_player_color = "w"
+		
+	# Синхронизируем локальную переменную цвета
+	player_color = GameManager.actual_player_color
+	
+	# Шахматная хитрость: перед перегенерацией сетки нам нужно сохранить текущую позицию фигур!
+	# Создаем временную карту текущего расположения фигур на доске
+	var current_position_map = {}
+	for chess_name in cells_dict:
+		var cell = cells_dict[chess_name]
+		if cell.piece_data != null:
+			current_position_map[chess_name] = cell.piece_data.duplicate()
+			
+	print("--- GiChess: Переворот доски... Сохранено фигур для переноса: ", current_position_map.size(), " ---")
+	
+	# Полностью пересоздаем клетки и внешнюю разметку нотации с новым направлением
+	await generate_board()
+	
+	# Расставляем фигуры обратно на их законные места, но уже в новые физические координаты сетки
+	for chess_name in current_position_map:
+		var p_data = current_position_map[chess_name]
+		if cells_dict.has(chess_name):
+			cells_dict[chess_name].set_piece(p_data["type"], p_data["color"])
+			
+	print("--- GiChess: Доска успешно перевернута в локальном режиме! ---")

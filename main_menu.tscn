@@ -48,12 +48,17 @@ custom_minimum_size = Vector2(0, 60)
 layout_mode = 2
 text = "Play with computer"
 
+[node name="EloOption" type="OptionButton" parent="CenterContainer/VBoxContainer" unique_id=1955186330]
+custom_minimum_size = Vector2(150, 25)
+layout_mode = 2
+size_flags_horizontal = 4
+
 [node name="TimeOption" type="OptionButton" parent="CenterContainer/VBoxContainer" unique_id=511498020]
 custom_minimum_size = Vector2(150, 25)
 layout_mode = 2
 size_flags_horizontal = 4
 
-[node name="EloOption" type="OptionButton" parent="CenterContainer/VBoxContainer" unique_id=1955186330]
+[node name="ColorOption" type="OptionButton" parent="CenterContainer/VBoxContainer" unique_id=2123753080]
 custom_minimum_size = Vector2(150, 25)
 layout_mode = 2
 size_flags_horizontal = 4

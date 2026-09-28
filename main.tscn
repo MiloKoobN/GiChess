@@ -54,6 +54,11 @@ custom_minimum_size = Vector2(250, 0)
 layout_mode = 2
 size_flags_vertical = 4
 
+[node name="HistoryLabel" type="RichTextLabel" parent="CenterContainer/GameLayout/SidePanel" unique_id=1287964914]
+custom_minimum_size = Vector2(200, 50)
+layout_mode = 2
+scroll_following = true
+
 [node name="BlackTimerLabel" type="Label" parent="CenterContainer/GameLayout/SidePanel" unique_id=1509092163]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.08627451, 0.08235294, 0.07058824, 1)
@@ -81,4 +86,13 @@ theme_override_font_sizes/font_size = 36
 layout_mode = 2
 text = "Resign"
 
+[node name="Spacer" type="Control" parent="CenterContainer/GameLayout/SidePanel" unique_id=1905050733]
+custom_minimum_size = Vector2(0, 15)
+layout_mode = 2
+
+[node name="CopyPNGButton" type="Button" parent="CenterContainer/GameLayout/SidePanel" unique_id=1668564921]
+layout_mode = 2
+text = "Копировать PNG"
+
 [node name="SoundPlayer" type="AudioStreamPlayer" parent="." unique_id=221654747]
+max_polyphony = 4
