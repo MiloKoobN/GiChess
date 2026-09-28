@@ -6,7 +6,9 @@ enum Mode { LOCAL, AI }
 # Настройки по умолчанию
 var game_mode: Mode = Mode.LOCAL
 var selected_elo: int = 1500      # Выбранное ELO бота (например: 1000, 1500, 2000)
-var time_control_minutes: int = 10 # Время на партию в минутах (например: 1, 3, 5, 10)
+var base_match_time: int = 600       # Базовое время матча в секундах (дефолт 10 мин)
+var time_increment_seconds: int = 0  # Секунды инкремента Фишера за ход
+
 
 # Фича «Выбор цвета стороны» (v0.1.1.0)
 # 0 = Play as White, 1 = Play as Black, 2 = Play as Random

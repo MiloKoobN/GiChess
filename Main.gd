@@ -107,11 +107,13 @@ func _ready() -> void:
 		white_name_label.text = "Player 1 (White)"
 		black_name_label.text = "Player 2 (Black)"
 		
-	# 4. НАСТРОЙКА ТАЙМЕРОВ
-	white_time_left = GameManager.time_control_minutes * 60.0
-	black_time_left = GameManager.time_control_minutes * 60.0
-	update_timer_labels()
+		# # 4. НАСТРОЙКА ТАЙМЕРОВ (Исправлено v0.1.2.0)
+	# Берем общее количество секунд, которое мы настроили в главном меню
+	white_time_left = float(GameManager.base_match_time)
+	black_time_left = float(GameManager.base_match_time)
 	
+	update_timer_labels()
+
 	if not btn_resign.pressed.is_connected(_on_resign_pressed):
 		btn_resign.pressed.connect(_on_resign_pressed)
 	
@@ -589,6 +591,19 @@ func update_move_highlight(from_cell: ColorRect, to_cell: ColorRect) -> void:
 	last_target_cell.highlight_last_move()
 
 func complete_turn() -> void:
+	# === ИНТЕГРАЦИЯ ИНКРЕМЕНТА ФИШЕРА (v0.1.2.0) ===
+	# Начисляем секунды игроку, который ТОЛЬКО ЧТО завершил свой ход
+	if current_turn == "w":
+		# Если у тебя время хранится в секундах (например, white_time_left):
+		white_time_left += GameManager.time_increment_seconds
+		print("--- GiChess: Белым добавлено +", GameManager.time_increment_seconds, " сек. по Фишеру! ---")
+	else:
+		black_time_left += GameManager.time_increment_seconds
+		print("--- GiChess: Черным добавлено +", GameManager.time_increment_seconds, " сек. по Фишеру! ---")
+	
+	# Принудительно обновляем текст таймеров на экране, чтобы прибавка отобразилась мгновенно
+	update_timer_labels()
+	
 	# === ВЫЧИСЛЕНИЕ СТАТУСА ШАХА И МАТА ДЛЯ PGN-ЛОГА (v0.0.3.0) ===
 	# Так как текущий игрок ТОЛЬКО ЧТО сделал ход, мы проверяем, 
 	# объявил ли этот ход ШАХ или МАТ вражескому королю (оппоненту).
@@ -768,14 +783,32 @@ func call_stockfish_process() -> String:
 	
 	pipe_in.store_line(position_cmd)
 	
+		# === ИСПРАВЛЕНИЕ v0.1.2.0: ТУРНИРНЫЙ МЕНЕДЖМЕНТ ВРЕМЕНИ СТОКФИША ===
 	var wtime_ms = int(white_time_left * 1000)
 	var btime_ms = int(black_time_left * 1000)
+	var inc_ms = int(GameManager.time_increment_seconds * 1000) # Наш инкремент Фишера
 	
+	# Формируем базовую команду со временем и инкрементом Фишера
+	var go_cmd = "go wtime " + str(wtime_ms) + " btime " + str(btime_ms) + " winc " + str(inc_ms) + " binc " + str(inc_ms)
+	
+	# Умное ускорение в дебюте (до 6-го хода думает не более 1.2 сек)
 	if moves_history.size() < 12:
-		var debut_time = 1500
-		pipe_in.store_line("go wtime " + str(wtime_ms) + " btime " + str(btime_ms) + " movetime " + str(debut_time))
+		go_cmd += " movetime 1200"
 	else:
-		pipe_in.store_line("go wtime " + str(wtime_ms) + " btime " + str(btime_ms))
+		# РАСЧЕТ БЕЗОПАСНОГО ВРЕМЕНИ НА ХОД:
+		# Движок рассчитывает, что партия продлится еще примерно 30 ходов.
+		# Делим текущее оставшееся время ИИ на 30 и прибавляем инкремент.
+		var current_ai_time = btime_ms if GameManager.actual_player_color == "w" else wtime_ms
+		var safe_move_time = int(current_ai_time / 30) + inc_ms
+		
+		# Заставляем думать НЕ МЕНЕЕ 400 мс и НЕ БОЛЕЕ 4 секунд на ход, 
+		# чтобы игра оставалась динамичной и Рыба не зависала!
+		safe_move_time = clamp(safe_move_time, 400, 4000)
+		go_cmd += " movetime " + str(safe_move_time)
+	
+	# Отправляем готовую команду в пайп
+	pipe_in.store_line(go_cmd)
+	# ==================================================================
 		
 	pipe_in.flush()
 

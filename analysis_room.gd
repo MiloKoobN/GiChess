@@ -128,6 +128,13 @@ func _ready() -> void:
 			view_position_at_step(current_analysis_step)
 		await get_tree().process_frame
 		refresh_arrow_and_markers_only()
+	
+	if is_instance_valid(history_label):
+		history_label.meta_clicked.connect(_on_pgn_move_clicked)
+	
+		if is_instance_valid(history_label):
+			history_label.meta_hover_started.connect(_on_history_label_meta_hover_started)
+			history_label.meta_hover_ended.connect(_on_history_label_meta_hover_ended)
 
 # === ГЕНЕРАЦИЯ ИНТЕРФЕЙСА АНАЛИЗА ИЗ КОДА ===
 
@@ -177,10 +184,35 @@ func setup_evaluation_bar() -> void:
 	eval_display_label.add_theme_font_size_override("font_size", 18)
 	main_hbox.add_child(eval_display_label)
 	
+	# === МОДЕРНИЗАЦИЯ v0.1.2.0: ДВУХСТОРОННИЙ КОНТУР ПО 2 ПИКСЕЛЯ ===
+	var text_color_graphite = Color("333333", 0.7) # Строгий графитовый цвет границ
+	
+	# Правая линия границы
+	var right_edge_line = ColorRect.new()
+	right_edge_line.name = "EvalRightEdgeLine"
+	right_edge_line.color = text_color_graphite
+	bar_wrapper.add_child(right_edge_line)
+	
+	# Левая линия границы (НОВАЯ!)
+	var left_edge_line = ColorRect.new()
+	left_edge_line.name = "EvalLeftEdgeLine"
+	left_edge_line.color = text_color_graphite
+	bar_wrapper.add_child(left_edge_line)
+	
 	bar_wrapper.item_rect_changed.connect(func():
 		if is_instance_valid(bar_wrapper) and is_instance_valid(eval_center_line):
 			eval_center_line.size = Vector2(bar_wrapper.size.x, 2)
 			eval_center_line.position = Vector2(0, bar_wrapper.size.y / 2 - 1)
+			
+			# Намертво фиксируем правую линию по правому краю шкалы
+			if is_instance_valid(right_edge_line):
+				right_edge_line.size = Vector2(2, bar_wrapper.size.y)
+				right_edge_line.position = Vector2(bar_wrapper.size.x - 2, 0)
+				
+			# Намертво фиксируем левую линию по левому краю шкалы (X = 0)
+			if is_instance_valid(left_edge_line):
+				left_edge_line.size = Vector2(2, bar_wrapper.size.y)
+				left_edge_line.position = Vector2(0, 0)
 	)
 	
 	var layout = get_node_or_null("CenterContainer/GameLayout")
@@ -271,6 +303,9 @@ func generate_board() -> void:
 		for col in range(8):
 			var render_row = (7 - row) if is_flipped else row
 			var render_col = (7 - col) if is_flipped else col
+			
+			if cell_scene == null:
+				cell_scene = preload("res://cell.tscn")
 			
 			var cell = cell_scene.instantiate()
 			var current_color = light_color if (row + col) % 2 == 0 else dark_color
@@ -776,6 +811,13 @@ func apply_analysis_to_ui_log() -> void:
 	bb_text += "[font_size=12][color=#666666]!! Brilliant   ! Excellent   ?! Inaccuracy   ? Mistake   ?? Blunder   x? Missed Win[/color][/font_size]\n"
 	bb_text += "[color=#222222]----------------------------------------------------[/color]\n\n"
 	
+	# Включаем поддержку BBCode и убираем подчеркивание ссылок для красоты
+	history_label.bbcode_enabled = true
+	history_label.meta_underlined = false
+	
+	# Устанавливаем цвет ссылки при наведении (на всякий случай дублируем)
+	history_label.add_theme_color_override("link_hover_color", Color("#26cc53"))
+	
 	var move_num = 1
 	for i in range(moves_history.size()):
 		if i % 2 == 0: 
@@ -784,7 +826,11 @@ func apply_analysis_to_ui_log() -> void:
 		var pgn_move = pgn_history[i] if pgn_history.size() > i else moves_history[i]
 		var quality_suffix = analysis_move_labels[i] if analysis_move_labels.size() > i else ""
 		
-		bb_text += pgn_move + quality_suffix + "     "
+		# === ИСПРАВЛЕНИЕ v0.1.2.0: ГАРАНТИРОВАННЫЙ БЕЛЫЙ ЦВЕТ ДЛЯ ЧЕРНОЙ ПАНЕЛИ ===
+		# Шаг 0 — это старт, поэтому первый сделанный ход (i = 0) станет шагом 1 (i + 1)
+		var step_target = i + 1
+		bb_text += "[url=" + str(step_target) + "][color=#ffffff]" + pgn_move + "[/color][/url]" + quality_suffix + "     "
+		
 		if i % 2 == 1:
 			bb_text += "\n"
 			move_num += 1
@@ -908,3 +954,63 @@ func _force_set_debut_advantage() -> void:
 			$SidePanel/EvaluationLabel.text = "Advantage: +0.3"
 		elif has_node("EvaluationLabel"):
 			$EvaluationLabel.text = "Advantage: +0.3"
+
+func _on_pgn_move_clicked(meta) -> void:
+	var target_step = int(meta)
+
+	if target_step >= 0 and target_step <= moves_history.size():
+		print("--- GiChess: Клик по ходу нотации. Переходим на шаг: ", target_step, " ---")
+		current_analysis_step = target_step
+
+		# Перерисовываем доску, фигуры и термометр под этот ход
+		view_position_at_step(current_analysis_step)
+
+		# Обновляем доступность кнопок Вперед/Назад
+		update_button_states()
+
+# Вызывается, когда мышка НАВЕДЕНА на ход в истории
+func _on_history_label_meta_hover_started(meta) -> void:
+	history_label.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	
+	# Получаем номер шага, на который навели мышку
+	var hovered_step = int(meta)
+	_update_ui_log_with_highlight(hovered_step)
+
+# Вызывается, когда мышка УХОДИТ с хода
+func _on_history_label_meta_hover_ended(meta) -> void:
+	history_label.mouse_default_cursor_shape = Control.CURSOR_ARROW
+	
+	# Сбрасываем выделение фона (передаем -1)
+	_update_ui_log_with_highlight(-1)
+
+func _update_ui_log_with_highlight(highlight_step: int) -> void:
+	if not is_instance_valid(history_label): return
+	
+	var bb_text = "[center][color=#999999]COMPUTER ANALYSIS[/color][/center]\n"
+	bb_text += "[font_size=12][color=#666666]!! Brilliant   ! Excellent   ?! Inaccuracy   ? Mistake   ?? Blunder   x? Missed Win[/color][/font_size]\n"
+	bb_text += "[color=#222222]----------------------------------------------------[/color]\n\n"
+	
+	var move_num = 1
+	for i in range(moves_history.size()):
+		if i % 2 == 0: 
+			bb_text += "[color=#555555]" + str(move_num) + ".[/color] "
+		
+		var pgn_move = pgn_history[i] if pgn_history.size() > i else moves_history[i]
+		var quality_suffix = analysis_move_labels[i] if analysis_move_labels.size() > i else ""
+		
+		var step_target = i + 1
+		
+		# Если это тот ход, на который сейчас наведена мышка
+		if step_target == highlight_step:
+			# ИСПРАВЛЕНО v0.1.2.0: Используем правильный тег [bgcolor] 
+			# Серый фон (#333333) + Ярко-зеленый текст ходов (#26cc53)
+			bb_text += "[url=" + str(step_target) + "][bgcolor=#333333][color=#26cc53]" + pgn_move + "[/color][/bgcolor][/url]" + quality_suffix + "     "
+		else:
+			# В обычном состоянии — просто белый кликабельный текст (так как панель черная)
+			bb_text += "[url=" + str(step_target) + "][color=#ffffff]" + pgn_move + "[/color][/url]" + quality_suffix + "     "
+		
+		if i % 2 == 1:
+			bb_text += "\n"
+			move_num += 1
+			
+	history_label.text = bb_text

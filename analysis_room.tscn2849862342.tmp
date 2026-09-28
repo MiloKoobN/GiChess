@@ -1,0 +1,50 @@
+[gd_scene format=3 uid="uid://t6ytd0upf84i"]
+
+[ext_resource type="Script" uid="uid://dyhn5iaqnx80r" path="res://analysis_room.gd" id="1_n7tc4"]
+
+[node name="AnalysisRoom" type="Control" unique_id=1912677766]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_n7tc4")
+
+[node name="Background" type="ColorRect" parent="." unique_id=1250365220]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.93333334, 0.93333334, 0.93333334, 1)
+
+[node name="CenterContainer" type="CenterContainer" parent="." unique_id=440627051]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="GameLayout" type="HBoxContainer" parent="CenterContainer" unique_id=246462787]
+layout_mode = 2
+theme_override_constants/separation = 40
+
+[node name="AspectRatioContainer" type="AspectRatioContainer" parent="CenterContainer/GameLayout" unique_id=807988698]
+layout_mode = 2
+
+[node name="BoardWrapper" type="MarginContainer" parent="CenterContainer/GameLayout/AspectRatioContainer" unique_id=84284559]
+layout_mode = 2
+theme_override_constants/margin_left = 50
+theme_override_constants/margin_top = 50
+theme_override_constants/margin_right = 50
+theme_override_constants/margin_bottom = 50
+
+[node name="Board" type="GridContainer" parent="CenterContainer/GameLayout/AspectRatioContainer/BoardWrapper" unique_id=1124156251]
+custom_minimum_size = Vector2(640, 640)
+layout_mode = 2
+theme_override_constants/h_separation = 0
+theme_override_constants/v_separation = 0
+columns = 8

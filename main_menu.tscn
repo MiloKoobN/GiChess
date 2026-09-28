@@ -53,7 +53,7 @@ custom_minimum_size = Vector2(150, 25)
 layout_mode = 2
 size_flags_horizontal = 4
 
-[node name="TimeOption" type="OptionButton" parent="CenterContainer/VBoxContainer" unique_id=511498020]
+[node name="TimeOption" type="MenuButton" parent="CenterContainer/VBoxContainer" unique_id=1586331368]
 custom_minimum_size = Vector2(150, 25)
 layout_mode = 2
 size_flags_horizontal = 4
