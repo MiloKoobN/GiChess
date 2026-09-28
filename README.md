@@ -2,31 +2,27 @@
 
 GiChess is a high-performance, open-source chess application and analysis ecosystem built from the ground up using **Godot 4** and **GDScript**. 
 
-Designed for both casual play and serious game review, it seamlessly connects to the world-class **Stockfish engine** via background multi-threading, delivering tournament-grade accuracy and instant tactical feedback.
+Designed for both casual play and serious game review, it seamlessly connects to the world-class **Stockfish engine** via background multi-threading, delivering tournament-grade accuracy, smart time management, and instant tactical feedback.
 
 ---
 
-## 🚀 Key Features
+## 🚀 Key Features (v0.1.2.0 Alpha)
 
 * **🤖 Asynchronous Stockfish Integration:** Full UCI-compliant communication with the Stockfish engine running on a dedicated background thread, preventing UI freezes during high-depth calculations.
-* **🔬 Advanced Analysis Room:** Dynamic evaluation tracking with real-time tactical markers (Blunders `??`, Mistakes `?`, Inaccuracies `?!`, Brilliant moves `!!`) [Lichess]. 
-* **🔄 Flawless Board Flipping:** FIDE-compliant grid inversion for both local matches and analysis. Coordinates, ranks (`1-8`), files (`a-h`), and engine arrows dynamically reverse instantly based on your perspective [Lichess].
-* **🎨 Side Selection & Color Picker:** Play as White, Black, or choose Random. The game automatically handles turn execution, board flipping, and immediate AI responses.
-* **⚙️ Tournament Logic:** Fully integrated rules including 3-fold repetition check, 50-move rule, insufficient material draw detection, and en passant captures.
+* **🕒 Fischer Time Increment Controls:** Supports FIDE-compliant time formats (including **5+5, 10+10, 30+30, 10+15**) with a multi-level nested `MenuButton` interface that smoothly flies out to the right [1.1.2', 1.1.9', 1.3.7].
+* **🔬 Premium Interactive Log:** Click directly on any historical move (e.g., `Nf3`) to instantly jump to that position, update engine arrows, and see real-time evaluations. Features an elegant **Green hover effect** on a dark background (`#333333`).
+* **⚙️ Advanced Engine Time Management:** Fixed critical Move 6 over-calculation bugs. Stockfish now intelligently scales its thinking speed based on its remaining clock (`clamp(400ms to 4000ms)`), eliminating accidental time losses.
+* **🔄 Flawless Board & Notation Flipping:** FIDE-compliant grid inversion for both local matches and analysis. Coordinates, ranks (`1-8`), files (`a-h`), and engine arrows dynamically reverse instantly with zero visual overlap.
+* **📊 Contrast Shield Evaluation Bar:** The dynamic thermometer widget (`eval_bar`) features a symmetric **2-pixel dark graphite border** on both sides, ensuring it never blends into the light panel background.
 
 ---
 
-## 📈 Current Project State: **v0.1.1.0 Alpha**
+## 📈 Roadmap & What's Next (The Grand Finale of 0.1.x)
 
-The core gameplay loop and the Analysis module are **officially stable**! You can now play full matches, reverse perspectives, and review your chess games with static debut caching (`Advantage: +0.3` and automatic `e2-e4` guidance on Move 0) without any game-breaking crashes [Lichess].
+This is the **final patch of the 0.1.x alpha branch**. We are officially freezing this stage to prepare for the massive transition to **GiChess v0.2.0.0**!
 
----
-
-## 🗺️ Roadmap (What's Coming in v0.1.2.0)
-
-- [ ] 🕒 **Fischer Time Increment:** Custom settings to add extra seconds to the clock after every legal move to prevent time-scrambles.
-- [ ] 📊 **Polished Evaluation Bar:** Smooth real-time tweening and enhanced visual layout for the vertical thermometer widget.
-- [ ] 💎 **Performance Optimization:** Edge-case bug hunting, multi-threading optimizations, and code refactoring for flawless stability.
+- [ ] 🎨 **Visual Refinements:** Fresh aesthetic UI updates, theme polishing, and subtle board design upgrades.
+- [ ] 🐛 **Micro-Bug Hunting:** A thorough sweep to squash remaining edge-case bugs, improve multi-threading engine safety, and ensure total layout stability.
 
 ---
 
