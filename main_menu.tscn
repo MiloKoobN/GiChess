@@ -2,6 +2,59 @@
 
 [ext_resource type="Script" uid="uid://gc0g0fkkvvm3" path="res://main_menu.gd" id="1_06t4h"]
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_06t4h"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_7vrkn"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_fu7sn"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+expand_margin_left = 4.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_jix8l"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_glbon"]
+content_margin_left = 5.0
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+
 [node name="MainMenu" type="Control" unique_id=556883357]
 layout_mode = 3
 anchors_preset = 15
@@ -34,31 +87,44 @@ theme_override_constants/separation = 20
 
 [node name="Label" type="Label" parent="CenterContainer/VBoxContainer" unique_id=1762157113]
 layout_mode = 2
-theme_override_colors/font_color = Color(0.08627451, 0.08235294, 0.07058824, 1)
+theme_override_colors/font_color = Color(0.13333334, 0.13333334, 0.13333334, 1)
 theme_override_font_sizes/font_size = 100
 text = "GiChess"
 
 [node name="BtnLocal" type="Button" parent="CenterContainer/VBoxContainer" unique_id=1264970564]
 custom_minimum_size = Vector2(0, 60)
 layout_mode = 2
+theme_override_colors/font_color = Color(0.13333334, 0.13333334, 0.13333334, 1)
+theme_override_font_sizes/font_size = 25
+theme_override_styles/normal = SubResource("StyleBoxFlat_06t4h")
 text = "Play Local"
 
 [node name="BtnAI" type="Button" parent="CenterContainer/VBoxContainer" unique_id=64413115]
 custom_minimum_size = Vector2(0, 60)
 layout_mode = 2
+theme_override_colors/font_color = Color(0.13333334, 0.13333334, 0.13333334, 1)
+theme_override_font_sizes/font_size = 25
+theme_override_styles/normal = SubResource("StyleBoxFlat_7vrkn")
 text = "Play with computer"
 
 [node name="EloOption" type="OptionButton" parent="CenterContainer/VBoxContainer" unique_id=1955186330]
 custom_minimum_size = Vector2(150, 25)
 layout_mode = 2
 size_flags_horizontal = 4
+theme_override_colors/font_color = Color(0.13333334, 0.13333334, 0.13333334, 1)
+theme_override_font_sizes/font_size = 16
+theme_override_styles/normal = SubResource("StyleBoxFlat_fu7sn")
 
 [node name="TimeOption" type="MenuButton" parent="CenterContainer/VBoxContainer" unique_id=1586331368]
 custom_minimum_size = Vector2(150, 25)
 layout_mode = 2
 size_flags_horizontal = 4
+theme_override_colors/font_color = Color(0.13333334, 0.13333334, 0.13333334, 1)
+theme_override_styles/normal = SubResource("StyleBoxFlat_jix8l")
 
 [node name="ColorOption" type="OptionButton" parent="CenterContainer/VBoxContainer" unique_id=2123753080]
 custom_minimum_size = Vector2(150, 25)
 layout_mode = 2
 size_flags_horizontal = 4
+theme_override_colors/font_color = Color(0.13333334, 0.13333334, 0.13333334, 1)
+theme_override_styles/normal = SubResource("StyleBoxFlat_glbon")

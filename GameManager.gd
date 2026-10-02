@@ -30,3 +30,55 @@ func determine_actual_color() -> void:
 		# Рандом 50 на 50
 		actual_player_color = "w" if randf() > 0.5 else "b"
 	print("--- GiChess: Финальный цвет игрока определен: ", actual_player_color, " ---")
+
+## Получить параметры Skill Level и Depth на основе выбранного ELO
+func get_bot_parameters() -> Dictionary:
+	var skill: int = 20
+	var depth: int = -1 # -1 означает без ограничений по глубине
+	
+	if selected_elo <= 900:
+		skill = 0
+		depth = 1
+	elif selected_elo <= 1100:
+		skill = 0
+		depth = 2
+	elif selected_elo <= 1300:
+		skill = 3
+		depth = 3
+	elif selected_elo <= 1500:
+		skill = 6
+		depth = 5
+	elif selected_elo <= 1700:
+		skill = 10
+		depth = 8
+	elif selected_elo <= 1900:
+		skill = 14
+		depth = 12
+	elif selected_elo <= 2100:
+		skill = 18
+		depth = 16
+	else:
+		skill = 20
+		depth = -1
+		
+	return {"skill_level": skill, "depth": depth}
+
+## Возвращает массив UCI-команд для инициализации сложности (вызывать при старте матча)
+func get_difficulty_init_commands() -> Array[String]:
+	var bot_params = get_bot_parameters()
+	return [
+		"setoption name UCI_LimitStrength value false",
+		"setoption name Skill Level value " + str(bot_params["skill_level"])
+	]
+
+
+## Формирует финальную команду "go" с учётом тайм-менеджмента и ограничений глубины
+func build_ai_go_command(wtime: int, btime: int, winc: int, binc: int) -> String:
+	var bot_params = get_bot_parameters()
+	var cmd = "go wtime %d btime %d winc %d binc %d" % [wtime, btime, winc, binc]
+	
+	# Если для уровня предусмотрено ограничение глубины, добавляем его в строку
+	if bot_params["depth"] > 0:
+		cmd += " depth " + str(bot_params["depth"])
+		
+	return cmd

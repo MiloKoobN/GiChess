@@ -1,11 +1,17 @@
 extends Control
 
-# === ПЕРЕМЕННЫЕ ДЛЯ ПРЕМУВОВ (v0.0.4.0) ===
-var premove_from_cell: ColorRect = null
-var premove_to_cell: ColorRect = null
-var has_premove: bool = false
+# Список созданных фантомных TextureRect премува, для очистки (v0.1.3.0)
+var premove_ghost_rects: Array[TextureRect] = []
+
+# === ПЕРЕМЕННЫЕ ДЛЯ МНОЖЕСТВЕННЫХ ПРЕМУВОВ (v0.1.3.0) ===
+# Массив словарей: { "from": ColorRect, "to": ColorRect }
+var premove_queue: Array[Dictionary] = []
+# Флаг для совместимости с твоей остальной логикой (true, если есть хоть один премув)
+var has_premove: bool:
+	get: return not premove_queue.is_empty()
+
 const COLOR_PREMOVE_HIGHLIGHT = Color("4b648a", 0.6) # Мягкий синий цвет подсветки Lichess
-var player_color: String = "w" # Цвет игрока-человека (всегда "w" для Белых)
+var player_color: String = "w"
 
 var ai_thinking_label: Label
 
@@ -194,6 +200,7 @@ func _ready() -> void:
 func _on_resign_pressed() -> void:
 	game_over = true
 	show_game_over_screen("DEFEAT", "You resigned")
+	end_drag()
 
 func _on_timer_tick() -> void:
 	if game_over: return
@@ -203,11 +210,13 @@ func _on_timer_tick() -> void:
 		if white_time_left <= 0:
 			game_over = true
 			show_game_over_screen("TIME IS UP", "Black Wins!")
+			end_drag()
 	else:
 		black_time_left -= 1.0
 		if black_time_left <= 0:
 			game_over = true
 			show_game_over_screen("TIME IS UP", "White Wins!")
+			end_drag()
 			
 	update_timer_labels()
 
@@ -390,30 +399,37 @@ func _on_cell_clicked(_grid_pos: Vector2i, chess_coordinate: String) -> void:
 		# Б) ХОД ИИ STOCKFISH (Планирование премува кликами в режиме AI)
 	else:
 		if GameManager.game_mode == GameManager.Mode.AI:
+			
+			# Проверяем, находится ли на этой клетке наша реальная фигура ИЛИ наш фантом из прошлого премува
+			var has_our_piece = (clicked_cell.piece_data != null and clicked_cell.piece_data["color"] == player_color)
+			var has_our_ghost = is_cell_occupied_by_premove_ghost(clicked_cell)
+			
 			if selected_cell == null:
-				if clicked_cell.piece_data != null and clicked_cell.piece_data["color"] == player_color:
+				# Теперь мы можем схватить фигуру, если она НАША реальная ИЛИ если это наш фантом!
+				if has_our_piece or has_our_ghost:
 					select_cell(clicked_cell)
 					start_drag(clicked_cell)
+				else:
+					# Клик по абсолютно свободной точке без выбранной своей — сбрасывает премувы
+					cancel_premove()
+					deselect_all()
 			else:
 				if selected_cell == clicked_cell:
+					cancel_premove()
 					deselect_all()
 					return
 				
-				# ХИТРОСТЬ v0.0.4.0: Если кликнули на свою фигуру, проверяем — умеет ли выбранная фигура туда ходить геометрически?
-				if clicked_cell.piece_data != null and clicked_cell.piece_data["color"] == player_color:
-					if is_move_base_legal(selected_cell, clicked_cell):
-						# Если базовая геометрия позволяет (например, конь прыгает буквой Г на свою пешку) — ЗАПИСЫВАЕМ ПРЕМУВ!
-						set_premove(selected_cell, clicked_cell)
-						deselect_all()
-						return
-					else:
-						# Если геометрия не позволяет — значит игрок просто хочет перевыбрать фигуру
-						deselect_all()
-						select_cell(clicked_cell)
-						start_drag(clicked_cell)
-						return
+				# Если мы тащим фигуру (реальную или фантомную) на другую СВОЮ фигуру (или на узел, где уже стоит фантом)
+				if has_our_piece and not has_our_ghost:
+					# ХИТРОСТЬ: проверяем геометрию. 
+					# ВНИМАНИЕ: Если мы ходим фантомом, is_move_base_legal может не сработать, 
+					# так как она проверяет реальную доску. Поэтому для фантомов мы разрешаем 
+					# ставить премув в любую точку (как у тебя было раньше), а проверится на ходу!
+					set_premove(selected_cell, clicked_cell)
+					deselect_all()
+					return
 				
-				# Если кликнули на пустую клетку или вражескую фигуру
+				# Если кликнули на пустую клетку, вражескую фигуру или строим цепочку дальше
 				if selected_cell != clicked_cell:
 					set_premove(selected_cell, clicked_cell)
 				deselect_all()
@@ -592,27 +608,21 @@ func update_move_highlight(from_cell: ColorRect, to_cell: ColorRect) -> void:
 
 func complete_turn() -> void:
 	# === ИНТЕГРАЦИЯ ИНКРЕМЕНТА ФИШЕРА (v0.1.2.0) ===
-	# Начисляем секунды игроку, который ТОЛЬКО ЧТО завершил свой ход
 	if current_turn == "w":
-		# Если у тебя время хранится в секундах (например, white_time_left):
 		white_time_left += GameManager.time_increment_seconds
 		print("--- GiChess: Белым добавлено +", GameManager.time_increment_seconds, " сек. по Фишеру! ---")
 	else:
 		black_time_left += GameManager.time_increment_seconds
 		print("--- GiChess: Черным добавлено +", GameManager.time_increment_seconds, " сек. по Фишеру! ---")
 	
-	# Принудительно обновляем текст таймеров на экране, чтобы прибавка отобразилась мгновенно
 	update_timer_labels()
 	
 	# === ВЫЧИСЛЕНИЕ СТАТУСА ШАХА И МАТА ДЛЯ PGN-ЛОГА (v0.0.3.0) ===
-	# Так как текущий игрок ТОЛЬКО ЧТО сделал ход, мы проверяем, 
-	# объявил ли этот ход ШАХ или МАТ вражескому королю (оппоненту).
 	var opponent_color = "b" if current_turn == "w" else "w"
 	var opponent_king_in_check = is_king_in_check(opponent_color)
 	var opponent_has_moves = has_any_legal_moves(opponent_color)
 	var is_mate_announced = opponent_king_in_check and not opponent_has_moves
 
-	# Генерация нотации и запись хода в массив истории
 	if not last_move_meta.is_empty():
 		var move_str = generate_move_notation(
 			last_move_meta["piece"], 
@@ -624,12 +634,11 @@ func complete_turn() -> void:
 		)
 		pgn_history.append(move_str)
 		update_history_ui()
-		last_move_meta.clear() # Очищаем временный контейнер полухода
+		last_move_meta.clear()
 
 	# === ОФИЦИАЛЬНАЯ СМЕНА ОЧЕРЕДИ ХОДА ===
 	current_turn = opponent_color
 	
-	# 1. Проверяем классический Мат и Пат (уже для нового игрока)
 	var has_moves = opponent_has_moves
 	var king_in_check = opponent_king_in_check
 	
@@ -638,38 +647,37 @@ func complete_turn() -> void:
 		if king_in_check:
 			var winner_text = "Белые победили!" if current_turn == "b" else "Черные победили!"
 			show_game_over_screen("МАТ", winner_text)
+			end_drag()
 		else:
 			show_game_over_screen("ПАТ", "Ничья")
+			end_drag()
 		return
 		
-	# 2. Проверяем правило 50 ходов (50 ходов = 100 полуходов)
 	if halfmove_clock >= 100:
 		game_over = true
 		show_game_over_screen("НИЧЬЯ", "Правило 50 ходов")
+		end_drag()
 		return
 		
-	# === ПРОВЕРКА ТРЕХКРАТНОГО ПОВТОРЕНИЯ ПОЗИЦИИ ===
 	if position_history.size() > 0:
 		var last_snapshot = position_history[position_history.size() - 1]
 		var repetitions = position_history.count(last_snapshot)
 		if repetitions >= 3:
 			game_over = true
 			show_game_over_screen("НИЧЬЯ", "3-кратное повторение позиции")
+			end_drag()
 			return
 	
-	# 3. Проверяем недостаток материала для мата
 	if is_insufficient_material():
 		game_over = true
 		show_game_over_screen("НИЧЬЯ", "Недостаточно материала для мата")
+		end_drag()
 		return
 		
-		# === ОБНОВЛЕНИЕ ПОДСВЕТКИ ШАХА (Исправлено в v0.0.5.0 для взятий) ===
-	# Перепроверяем шах заново: теперь, когда фигура точно приземлилась, данные на доске стабильны
 	king_in_check = is_king_in_check(current_turn)
 	
 	if king_in_check:
 		print("Внимание: Королю объявлен ШАХ!")
-		# Ищем короля, которому объявили шах, и красим в красный
 		for chess_name in cells_dict:
 			var cell = cells_dict[chess_name]
 			if cell.piece_data and cell.piece_data["type"] == "K" and cell.piece_data["color"] == current_turn:
@@ -677,62 +685,70 @@ func complete_turn() -> void:
 				checked_king_cell.highlight_check()
 				break
 	else:
-		# Если шаха НЕТ, принудительно убираем красный цвет с прошлого короля
 		if is_instance_valid(checked_king_cell):
 			checked_king_cell.reset_highlight()
-			
-			# Защита: если этот король только что ушел из-под шаха (последний ход),
-			# возвращаем его клетке правильный желтый цвет последнего хода!
 			if checked_king_cell == last_source_cell or checked_king_cell == last_target_cell:
 				checked_king_cell.highlight_last_move()
-				
 			checked_king_cell = null
 			
-			# Защита: если этот король только что ушел из-под шаха (последний ход),
-			# возвращаем его клетке правильный желтый цвет последнего хода!
 			if checked_king_cell == last_source_cell or checked_king_cell == last_target_cell:
 				checked_king_cell.highlight_last_move()
-				
 			checked_king_cell = null
 		
-			# === ИСПРАВЛЕНИЕ v0.1.1.0: АВТО-ХОД ИИ ПОД ЛЮБОЙ ЦВЕТ СТОРОНЫ ===
-	# Запускаем Stockfish только если наступил НЕ ход игрока (current_turn != player_color)
 	if GameManager.game_mode == GameManager.Mode.AI and current_turn != player_color and not game_over:
 		print("--- GiChess: Ход перешел к ИИ. Запуск Stockfish за сторону: ", current_turn, " ---")
 		get_ai_move()
 
-			# === ОБНОВЛЕНИЕ ТОЧЕК ХОДА ПРИ DRAG-AND-DROP ВО ВРЕМЯ ХОДА ИИ (v0.0.4.0) ===
-	# Если в момент хода ИИ игрок держит фигуру в руках — заново рисуем для неё серые точки ходов!
 	if is_dragging and is_instance_valid(drag_start_cell):
 		select_cell(drag_start_cell)
 		
-			# === АВТО-ИСПОЛНЕНИЕ ПРЕМУВА С СОЧНОЙ ПАУЗОЙ (v0.0.4.0) ===
-	if current_turn == player_color and has_premove and not game_over:
-		var p_from = premove_from_cell
-		var p_to = premove_to_cell
+	# === АВТО-ИСПОЛНЕНИЕ ОЧЕРЕДИ ПРЕМУВОВ С СОЧНОЙ ПАУЗОЙ (ОБНОВЛЕНО v0.1.3.0) ===
+	if current_turn == player_color and not premove_queue.is_empty() and not game_over:
+		# Читаем первый премув в массиве без извлечения
+		var next_premove = premove_queue.front()
+		var p_from = next_premove["from"]
+		var p_to = next_premove["to"]
 		
-		# Мгновенно очищаем буфер и синюю подсветку премува перед ожиданием
-		cancel_premove()
-		
-		# Делаем микро-паузу в 0.12 секунды, чтобы игрок увидел ход ИИ и услышал первый щелчок!
+		# Делаем микро-паузу в 0.10 секунды, чтобы игрок увидел ход соперника
 		await get_tree().create_timer(0.10).timeout
 		
-		# Защита: проверяем, не завершилась ли игра или не удалилась ли сцена за время паузы
+		# Защита: проверяем стабильность сцены после таймаута
 		if game_over or not is_instance_valid(self) or not is_instance_valid(p_from) or not is_instance_valid(p_to):
 			return
 		
-		# Теперь проверяем легальность нашего хода в наступившей позиции
+				# Проверяем легальность первого премува в наступившей позиции
 		if is_move_completely_legal(p_from, p_to):
-			print("⚡ GiChess: Премув легален! Авто-исполнение после микро-паузы.")
+			print("⚡ GiChess: Очередной премув легален! Авто-исполнение.")
+			
+			# Стираем подсветку и принудительно возвращаем 100% видимость оригинальной фигуре
+			if is_instance_valid(p_from): 
+				p_from.reset_highlight()
+				for child in p_from.get_children():
+					if child is TextureRect: 
+						child.modulate.a = 1.0
+						
+			if is_instance_valid(p_to): 
+				p_to.reset_highlight()
+			
+			# Убираем первый фантом целевой клетки из массива, чтобы он не двоился с реальной фигурой
+			if not premove_ghost_rects.is_empty():
+				var ghost = premove_ghost_rects.pop_front()
+				if is_instance_valid(ghost): 
+					ghost.queue_free()
+			
+			# Извлекаем ход из очереди, так как он успешно пошёл на доску
+			premove_queue.pop_front()
+			
 			var uci_move = p_from.chess_coordinate + p_to.chess_coordinate
 			moves_history.append(uci_move)
 			
-			# Запускаем ход без Твин-анимации, так как задержку мы уже выдержали искусственно!
 			is_drag_move = true
 			make_move(p_from, p_to)
 			is_drag_move = false
 		else:
-			print("❌ GiChess: Премув стал нелегальным и был автоматически отменен.")
+			print("❌ GiChess: Премув стал нелегальным. Вся цепочка премувов сброшена.")
+			# Если один ход сломался — вся остальная цепочка и все фантомы сгорают ради безопасности
+			cancel_premove()
 
 func get_ai_move() -> void:
 	is_ai_thinking = true
@@ -762,7 +778,6 @@ func call_stockfish_process() -> String:
 	var pipes = OS.execute_with_pipe(path_to_exe, [])
 	
 	# БЕЗОПАСНОСТЬ 2: Защита от краша "Index out of bounds (size() = 0)". 
-	# Если пайпы пустые или в них нет stdio — не трогаем их и выходим!
 	if pipes.is_empty() or not pipes.has("stdio"):
 		print("--- GiChess ОШИБКА: Каналы связи со Stockfish не были открыты ОС ---")
 		if is_instance_valid(self):
@@ -774,8 +789,11 @@ func call_stockfish_process() -> String:
 		
 	var pipe_in = pipes["stdio"]
 	
-	pipe_in.store_line("setoption name UCI_LimitStrength value true")
-	pipe_in.store_line("setoption name UCI_Elo value " + str(GameManager.selected_elo))
+	# === ОБНОВЛЕНИЕ v0.1.3.0: КАЛИБРОВКА СИЛЫ ЧЕРЕЗ SKILL LEVEL ИЗ GAMEMANAGER ===
+	var bot_params = GameManager.get_bot_parameters()
+	pipe_in.store_line("setoption name UCI_LimitStrength value false")
+	pipe_in.store_line("setoption name Skill Level value " + str(bot_params["skill_level"]))
+	# ===========================================================================
 	
 	var position_cmd = "position startpos"
 	if moves_history.size() > 0:
@@ -783,39 +801,43 @@ func call_stockfish_process() -> String:
 	
 	pipe_in.store_line(position_cmd)
 	
-		# === ИСПРАВЛЕНИЕ v0.1.2.0: ТУРНИРНЫЙ МЕНЕДЖМЕНТ ВРЕМЕНИ СТОКФИША ===
+	# === ТУРНИРНЫЙ МЕНЕДЖМЕНТ ВРЕМЕНИ СТОКФИША ===
 	var wtime_ms = int(white_time_left * 1000)
 	var btime_ms = int(black_time_left * 1000)
-	var inc_ms = int(GameManager.time_increment_seconds * 1000) # Наш инкремент Фишера
+	var inc_ms = int(GameManager.time_increment_seconds * 1000)
 	
-	# Формируем базовую команду со временем и инкрементом Фишера
 	var go_cmd = "go wtime " + str(wtime_ms) + " btime " + str(btime_ms) + " winc " + str(inc_ms) + " binc " + str(inc_ms)
 	
-	# Умное ускорение в дебюте (до 6-го хода думает не более 1.2 сек)
-	if moves_history.size() < 12:
-		go_cmd += " movetime 1200"
+	# Проверяем лимит глубины для слабых уровней
+	if bot_params["depth"] > 0:
+		go_cmd += " depth " + str(bot_params["depth"])
 	else:
-		# РАСЧЕТ БЕЗОПАСНОГО ВРЕМЕНИ НА ХОД:
-		# Движок рассчитывает, что партия продлится еще примерно 30 ходов.
-		# Делим текущее оставшееся время ИИ на 30 и прибавляем инкремент.
-		var current_ai_time = btime_ms if GameManager.actual_player_color == "w" else wtime_ms
-		var safe_move_time = int(current_ai_time / 30) + inc_ms
-		
-		# Заставляем думать НЕ МЕНЕЕ 400 мс и НЕ БОЛЕЕ 4 секунд на ход, 
-		# чтобы игра оставалась динамичной и Рыба не зависала!
-		safe_move_time = clamp(safe_move_time, 400, 4000)
-		go_cmd += " movetime " + str(safe_move_time)
+		# Умное ускорение в дебюте для сильных ботов
+		if moves_history.size() < 12:
+			go_cmd += " movetime 1200"
+		else:
+			var current_ai_time = btime_ms if GameManager.actual_player_color == "w" else wtime_ms
+			var safe_move_time = int(current_ai_time / 30) + inc_ms
+			safe_move_time = clamp(safe_move_time, 400, 4000)
+			go_cmd += " movetime " + str(safe_move_time)
 	
-	# Отправляем готовую команду в пайп
 	pipe_in.store_line(go_cmd)
-	# ==================================================================
-		
 	pipe_in.flush()
 
 	var best_move = ""
+	var last_eval_text = "0.0" # Буфер для хранения последней оценки позиции
+	
 	while true:
 		if pipe_in.get_error() != OK: break
 		var line = pipe_in.get_line()
+		
+		# === ОБНОВЛЕНИЕ v0.1.3.0: ПАРСИНГ ОЦЕНКИ ИЗ INFO SCORE ===
+		if line.begins_with("info ") and "score " in line:
+			var parsed_eval = parse_stockfish_eval(line)
+			if parsed_eval != "":
+				last_eval_text = parsed_eval
+		# =========================================================
+				
 		if line.begins_with("bestmove"):
 			var tokens = line.split(" ")
 			if tokens.size() > 1: best_move = tokens[1]
@@ -824,11 +846,11 @@ func call_stockfish_process() -> String:
 	pipe_in.store_line("quit")
 	pipe_in.close()
 	
-	# ВЫКЛЮЧАЕМ ИНДИКАТОР: Stockfish закончил думать (v0.1.1.0)
+	# ВЫКЛЮЧАЕМ ИНДИКАТОР: Stockfish закончил думать
 	if is_instance_valid(ai_thinking_label):
 		ai_thinking_label.call_deferred("set_visible", false)
 	
-	# БЕЗОПАСНОСТЬ 3: Передаем ход в GUI, только если игрок еще не закрыл доску и не вышел в меню
+	# БЕЗОПАСНОСТЬ 3: Передаем ход в GUI
 	if is_instance_valid(self):
 		call_deferred("_on_ai_move_received", best_move)
 		
@@ -1357,18 +1379,47 @@ func _input(event: InputEvent) -> void:
 			end_drag()
 
 func start_drag(cell: ColorRect) -> void:
+	if not is_instance_valid(cell): return
+	
 	is_dragging = true
 	drag_start_cell = cell
 	
+	# 1. Пытаемся получить текстуру реальной фигуры
+	var target_texture = cell.get_piece_texture()
+	var is_dragging_ghost = false
+	
+	# 2. Если реальной фигуры нет на клетке, ищем текстуру фантома премува
+	if target_texture == null:
+		for child in cell.get_children():
+			if child is TextureRect and child.mouse_filter == Control.MOUSE_FILTER_IGNORE and child.texture != null:
+				target_texture = child.texture
+				is_dragging_ghost = true
+				break
+				
+	# Если на клетке вообще нет ничего, что можно перетащить — аварийно выходим
+	if target_texture == null:
+		is_dragging = false
+		drag_start_cell = null
+		return
+	
+	# 3. Создаем иконку, летящую за курсором
 	dragged_piece_icon = TextureRect.new()
-	dragged_piece_icon.texture = cell.get_piece_texture()
+	dragged_piece_icon.texture = target_texture
 	dragged_piece_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	dragged_piece_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	dragged_piece_icon.size = cell.size
 	dragged_piece_icon.z_index = 100
 	add_child(dragged_piece_icon)
 	
-	cell.set_piece_icon_visible(false)
+	# 4. Визуально скрываем то, что мы только что взяли в руку
+	if is_dragging_ghost:
+		# Если потащили фантом — делаем невидимым именно фантомный TextureRect внутри этой клетки
+		for child in cell.get_children():
+			if child is TextureRect and child.mouse_filter == Control.MOUSE_FILTER_IGNORE:
+				child.visible = false
+	else:
+		# Если потащили обычную фигуру — используем твой штатный метод
+		cell.set_piece_icon_visible(false)
 
 func end_drag() -> void:
 	is_dragging = false
@@ -1414,30 +1465,91 @@ func get_cell_under_mouse() -> ColorRect:
 
 # === СИСТЕМА УПРАВЛЕНИЯ ПРЕМУВАМИ (v0.0.4.0) ===
 
+## Добавление премува в цепочку (больше не сбрасывает предыдущие!)
 func set_premove(from_cell: ColorRect, to_cell: ColorRect) -> void:
-	cancel_premove() # Сбрасываем предыдущий премув
+	# Проверка на дубликат: если игрок кликнул ту же фигуру туда же, не спамим в очередь
+	if not premove_queue.is_empty():
+		var last_move = premove_queue.back()
+		if last_move["from"] == from_cell and last_move["to"] == to_cell:
+			return
+			
+	# Добавляем новый премув в конец очереди
+	premove_queue.append({ "from": from_cell, "to": to_cell })
 	
-	premove_from_cell = from_cell
-	premove_to_cell = to_cell
-	has_premove = true
-	
-	# Используем дефер, чтобы покрасить клетки строго ПОСЛЕ завершения всех системных событий драга
+	# Красим клетки строго после завершения драга
 	call_deferred("_apply_premove_colors")
-
+	
 func _apply_premove_colors() -> void:
-	if has_premove and is_instance_valid(premove_from_cell) and is_instance_valid(premove_to_cell):
-		premove_from_cell.color = COLOR_PREMOVE_HIGHLIGHT
-		premove_to_cell.color = COLOR_PREMOVE_HIGHLIGHT
-		print("--- GiChess: Премув зафиксирован! Старт и финиш принудительно синие ---")
+	# Сначала чистим старые фантомы, чтобы не дублировать их при добавлении новых премувов в очередь
+	for ghost in premove_ghost_rects:
+		if is_instance_valid(ghost): ghost.queue_free()
+	premove_ghost_rects.clear()
+	
+	for move in premove_queue:
+		var from_cell = move["from"]
+		var to_cell = move["to"]
+		
+		# Красим подложку клеток в синий премув-цвет, как и раньше
+		if is_instance_valid(from_cell): from_cell.color = COLOR_PREMOVE_HIGHLIGHT
+		if is_instance_valid(to_cell): to_cell.color = COLOR_PREMOVE_HIGHLIGHT
+		
+		# Ищем оригинальный TextureRect на стартовой клетке
+		var original_texture_rect: TextureRect = null
+		if is_instance_valid(from_cell):
+			for child in from_cell.get_children():
+				if child is TextureRect and child.texture != null:
+					original_texture_rect = child
+					break
+		
+		# Если фигура найдена — крутим визуал Chess.com
+		if original_texture_rect:
+			# Старая клетка: делаем фигуру сильно прозрачной (будто она ушла)
+			original_texture_rect.modulate.a = 0.3
+			
+			# Новая клетка: создаем полупрозрачный фантом
+			var ghost_rect = TextureRect.new()
+			ghost_rect.texture = original_texture_rect.texture
+			
+			# Копируем настройки растягивания и центрирования, чтобы SVG не поплыл
+			ghost_rect.expand_mode = original_texture_rect.expand_mode
+			ghost_rect.stretch_mode = original_texture_rect.stretch_mode
+			ghost_rect.size = original_texture_rect.size
+			ghost_rect.position = original_texture_rect.position
+			
+			# Фантом на целевой клетке делаем видимым, но слегка прозрачным (75%)
+			ghost_rect.modulate.a = 0.75
+			
+			# Важно: отключаем реакцию на мышь у фантома, чтобы он не перехватывал клики по клетке!
+			ghost_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			
+			# Добавляем фантом на целевую клетку доски
+			to_cell.add_child(ghost_rect)
+			premove_ghost_rects.append(ghost_rect)
+			
+	print("--- GiChess: Призрачные фигуры Chess.com для премувов обновлены ---")
 
 func cancel_premove() -> void:
-	if has_premove:
-		if is_instance_valid(premove_from_cell): premove_from_cell.reset_highlight()
-		if is_instance_valid(premove_to_cell): premove_to_cell.reset_highlight()
-		
-		premove_from_cell = null
-		premove_to_cell = null
-		has_premove = false
+	# 1. Возвращаем оригинальным клеткам и их фигурам нормальный вид
+	for move in premove_queue:
+		if is_instance_valid(move["from"]): 
+			move["from"].reset_highlight()
+			
+			# Ищем TextureRect внутри стартовой клетки, чтобы вернуть ему 100% яркость
+			for child in move["from"].get_children():
+				if child is TextureRect:
+					child.modulate.a = 1.0
+				
+		if is_instance_valid(move["to"]): 
+			move["to"].reset_highlight()
+	
+	# 2. Удаляем все фантомные TextureRect с доски
+	for ghost in premove_ghost_rects:
+		if is_instance_valid(ghost):
+			ghost.queue_free()
+	premove_ghost_rects.clear()
+	
+	premove_queue.clear()
+	print("--- GiChess: Премувы и визуальные фантомы TextureRect очищены ---")
 
 func _on_flip_board_pressed() -> void:
 	if game_over: return
@@ -1471,3 +1583,52 @@ func _on_flip_board_pressed() -> void:
 			cells_dict[chess_name].set_piece(p_data["type"], p_data["color"])
 			
 	print("--- GiChess: Доска успешно перевернута в локальном режиме! ---")
+
+## Парсит строчку "info score cp XX" или "info score mate XX" в красивый текст
+func parse_stockfish_eval(line: String) -> String:
+	var tokens = line.split(" ")
+	var score_index = tokens.find("score")
+	
+	if score_index == -1 or score_index + 2 >= tokens.size():
+		return ""
+		
+	var type = tokens[score_index + 1] # "cp" или "mate"
+	var value_str = tokens[score_index + 2]
+	var value = int(value_str)
+	
+	var is_white_turn = (moves_history.size() % 2 == 0)
+	if not is_white_turn:
+		value = -value
+		
+	if type == "cp":
+		var pawns = value / 100.0
+		if pawns > 0:
+			return "+%.2f" % pawns
+		elif pawns < 0:
+			return "%.2f" % pawns
+		else:
+			return "0.00"
+	elif type == "mate":
+		if value > 0:
+			return "M%d" % abs(value)
+		else:
+			return "-M%d" % abs(value)
+			
+	return ""
+
+## Проверяет, завершился ли какой-то премув игрока на этой клетке
+func is_cell_occupied_by_premove_ghost(cell: ColorRect) -> bool:
+	if premove_queue.is_empty():
+		return false
+	# Нам важен самый последний премув в очереди: именно там сейчас "визуально" стоит фигура
+	var last_move = premove_queue.back()
+	return last_move["to"] == cell
+
+## Ищет текстуру фантомной фигуры на клетке, если реальной там нет
+func get_premove_ghost_texture(cell: ColorRect) -> Texture2D:
+	if is_instance_valid(cell):
+		for child in cell.get_children():
+			# Наш фантом — это временный TextureRect, у которого отключена мышь
+			if child is TextureRect and child.mouse_filter == Control.MOUSE_FILTER_IGNORE and child.texture != null:
+				return child.texture
+	return null

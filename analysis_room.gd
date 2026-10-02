@@ -767,7 +767,7 @@ func calculate_move_qualities() -> void:
 		var prev = analyzed_scores[i - 1]
 		var curr = analyzed_scores[i]
 		
-		# ИСПРАВЛЕНИЕ: Не ставим знаки "!" или "?!" для самого первого полухода партии
+		# Защита: пропускаем самый первый ход партии
 		if i == 1:
 			temp_labels.append("")
 			continue
@@ -780,24 +780,41 @@ func calculate_move_qualities() -> void:
 		var curr_pawns = float(curr["value"]) / 100.0 if curr["type"] == "cp" else (100.0 if curr["value"] > 0 else -100.0)
 		
 		var is_white_move = (i % 2 == 1)
+		
+		# Дельта: изменение оценки для сделавшего ход игрока
 		var delta = (curr_pawns - prev_pawns) if is_white_move else (prev_pawns - curr_pawns)
 		var label = ""
 		
-		if delta <= -1.5:
-			if (is_white_move and prev_pawns >= 3.0) or (not is_white_move and prev_pawns <= -3.0): 
-				label = "[color=#ff9f1c] x?[/color]"
-			else: 
-				label = "[color=#ff4a4a] ??[/color]"
-		elif delta <= -0.6: label = "[color=#ffcc00] ?[/color]"
-		elif delta <= -0.3: label = "[color=#4a90e2] ?![/color]"
-		elif delta >= 0.5: label = "[color=#00e5ff] !![/color]"
-		elif delta >= 0.2: label = "[color=#26cc53] ![/color]"
+		# Проверяем, идет ли сейчас форсированный мат на доске
+		var is_mate_line = (prev["type"] == "mate" or curr["type"] == "mate")
+		
+		# === КЛАССИЧЕСКИЙ ШАХМАТНЫЙ РАСЧЕТ v0.1.3.3 ===
+		
+		# 1. ОТЛАВЛИВАЕМ ОШИБКИ (Оценка пошла вниз)
+		if delta <= -2.0:
+			label = "[color=#ff4a4a] ??[/color]" # ЗЕВОК
+		elif delta <= -0.8:
+			label = "[color=#ffcc00] ?[/color]"   # ОШИБКА
+		elif delta <= -0.35:
+			label = "[color=#ff9f1c] ?![/color]"  # НЕТОЧНОСТЬ
+			
+		# 2. ОТЛАВЛИВАЕМ СИЛЬНЫЕ И ЛУЧШИЕ ХОДЫ (Оценка удержана или выросла)
+		elif delta >= 0.0 and not is_mate_line:
+			# Даем знак '!', если игрок реально НАШЕЛ перехват или увеличил преимущество
+			# Либо если он удержал большой перевес (больше 2 пешек) точным ходом
+			if delta > 0.25 or abs(curr_pawns) > 2.0:
+				label = "[color=#26cc53] ![/color]"  # Отличный / Лучший ход
+			else:
+				label = "" # Обычный развивающий ход в дебюте
+		else:
+			# Если идет матовая линия (вас матуют) или дельта незначительна — никаких знаков
+			label = ""
+		# ====================================
 			
 		temp_labels.append(label)
 	
 	analysis_move_labels = temp_labels
 	
-	# ЗАЩИТА ОТ СПАМА ПОТОКОВ: разрешаем обновлять экран не чаще раза в 100 миллисекунд
 	if not is_ui_log_updating:
 		is_ui_log_updating = true
 		call_deferred("apply_analysis_to_ui_log")
